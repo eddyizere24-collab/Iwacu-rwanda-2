@@ -200,7 +200,7 @@ export default function HomePage() {
                     Uri hano (Ahantu hagaragaye)
                   </h2>
                   <p className="text-[11px] text-muted-foreground">
-                    Amakuru yemejwe na GPS y&apos;inzego z&apos;ibanze
+                    Aho uri hagaragazwa hakoreshejwe GPS n&apos;ikarita y&apos;imbibi
                   </p>
                 </div>
               </div>
