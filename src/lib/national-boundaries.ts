@@ -246,16 +246,18 @@ export async function locateFromOfficialNationalBoundaries(
     }
   }
 
-  const provinceId = field(top.props, "province_id");
   const provinceNameEng = field(top.props, "province");
+  const provinceNameKey = provinceNameEng.toLowerCase().replace(/\\s+/g, " ").trim();
   const provinceNamesKiny: Record<string, string> = {
-    "1": "Umujyi wa Kigali",
-    "2": "Intara y'Amajyepfo",
-    "3": "Intara y'Iburengerazuba",
-    "4": "Intara y'Amajyaruguru",
-    "5": "Intara y'Iburasirazuba",
+    "city of kigali": "Umujyi wa Kigali",
+    "kigali city": "Umujyi wa Kigali",
+    "kigali": "Umujyi wa Kigali",
+    "southern province": "Intara y'Amajyepfo",
+    "western province": "Intara y'Iburengerazuba",
+    "northern province": "Intara y'Amajyaruguru",
+    "eastern province": "Intara y'Iburasirazuba",
   };
-  const provinceNameKiny = provinceNamesKiny[provinceId] ?? provinceNameEng;
+  const provinceNameKiny = provinceNamesKiny[provinceNameKey] ?? provinceNameEng;
   const districtName = field(top.props, "district");
   const sectorName = field(top.props, "sector");
   const cellName = field(top.props, "cell");
