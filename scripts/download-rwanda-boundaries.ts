@@ -39,15 +39,30 @@ function getScopeCodes(properties: Record<string, unknown>) {
   const sectorId = value(properties, "sector_id");
   const cellId = value(properties, "cell_id");
   const villageId = value(properties, "village_id");
-  if (![districtId, sectorId, cellId, villageId].every((id) => /^\d+$/.test(id))) {
+  const ids = [provinceId, districtId, sectorId, cellId, villageId];
+  if (!ids.every((id) => /^\d+$/.test(id))) {
     throw new Error(`Official feature has incomplete administrative IDs: ${JSON.stringify(properties)}`);
   }
+  if (
+    provinceId.length !== 1 ||
+    districtId.length !== 2 ||
+    sectorId.length !== 4 ||
+    cellId.length !== 6 ||
+    villageId.length !== 8 ||
+    !districtId.startsWith(provinceId) ||
+    !sectorId.startsWith(districtId) ||
+    !cellId.startsWith(sectorId) ||
+    !villageId.startsWith(cellId)
+  ) {
+    throw new Error(`Official feature has inconsistent hierarchical IDs: ${JSON.stringify(properties)}`);
+  }
 
-  const district = `RW-${districtId.padStart(2, "0")}`;
-  const sector = `${district}-${sectorId.slice(-2).padStart(2, "0")}`;
-  const cell = `${sector}-${cellId.slice(-2).padStart(2, "0")}`;
-  const village = `${cell}-${villageId.slice(-2).padStart(2, "0")}`;
-  return { district, sector, cell, village };
+  const province = `RW-P${provinceId}`;
+  const district = `${province}-D${districtId}`;
+  const sector = `${district}-S${sectorId}`;
+  const cell = `${sector}-C${cellId}`;
+  const village = `${cell}-V${villageId}`;
+  return { province, district, sector, cell, village };
 }
 
 async function fetchPage(offset: number): Promise<RawCollection> {
