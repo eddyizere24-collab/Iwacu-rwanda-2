@@ -40,19 +40,14 @@ export async function GET(req: NextRequest) {
     const includeDossier = searchParams.get("include_dossier") === "true" || reveal;
 
     if (!isSupabaseConfigured()) {
-      const records = getMockLeaders().filter((l) =>
-        scopeCode === "RW" ? true : l.scope_code.startsWith(scopeCode)
+      return NextResponse.json(
+        {
+          status: "error",
+          message_kiny: "Ububiko bw'amakuru nyayo ntiburashyirwaho. Nta makuru y'abayobozi y'icyitegererezo agaragazwa nk'ayemejwe.",
+          leaders: [],
+        },
+        { status: 503 }
       );
-
-      const leaders: LeaderPublic[] = records.map((l) => {
-        const pub = toPublicLeader(l, includeDossier);
-        if (reveal && l.phone_number) {
-          (pub as LeaderPublic & { phone_number?: string }).phone_number = l.phone_number;
-        }
-        return pub;
-      });
-
-      return NextResponse.json({ status: "success", leaders });
     }
 
     const supabase = createSupabaseServiceClient();
@@ -82,18 +77,15 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await query;
     if (error) {
-      console.warn("[leaders GET] DB error — falling back to mock data:", error.message);
-      const records = getMockLeaders().filter((l) =>
-        scopeCode === "RW" ? true : l.scope_code.startsWith(scopeCode)
+      console.error("[leaders GET] database query failed:", error.message);
+      return NextResponse.json(
+        {
+          status: "error",
+          message_kiny: "Ntibyashobotse gusoma amakuru nyayo y'abayobozi. Ongera ugerageze nyuma.",
+          leaders: [],
+        },
+        { status: 502 }
       );
-      const fallbackLeaders: LeaderPublic[] = records.map((l) => {
-        const pub = toPublicLeader(l, includeDossier);
-        if (reveal && l.phone_number) {
-          (pub as LeaderPublic & { phone_number?: string }).phone_number = l.phone_number;
-        }
-        return pub;
-      });
-      return NextResponse.json({ status: "success", leaders: fallbackLeaders });
     }
 
     const leaders: LeaderPublic[] = (data || []).map((row: Record<string, unknown>) => {
@@ -120,12 +112,15 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ status: "success", leaders });
   } catch (err) {
-    console.warn("[leaders GET] Exception caught — falling back to mock data:", err);
-    const records = getMockLeaders();
-    return NextResponse.json({
-      status: "success",
-      leaders: records.map((r) => toPublicLeader(r, false)),
-    });
+    console.error("[leaders GET] unexpected error:", err);
+    return NextResponse.json(
+      {
+        status: "error",
+        message_kiny: "Serivisi y'amakuru y'abayobozi ntiyabonetse.",
+        leaders: [],
+      },
+      { status: 502 }
+    );
   }
 }
 
