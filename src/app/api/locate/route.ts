@@ -115,16 +115,23 @@ export async function POST(
       return respondWithOfficialFallback(latitude, longitude, accuracy);
     }
 
-    const matches: ConfidenceMatch[] = ((rows as RpcRow[]) ?? []).map(
-      (r) => ({
-        scope_code: r.scope_code,
-        name_kiny: r.name_kiny,
-        name_eng: r.name_eng,
-        level: r.level as ConfidenceMatch["level"],
-        confidence: Number(r.confidence),
-        intersection_area_m2: Number(r.intersection_area_m2),
-      })
-    );
+    // Ignore an old sample polygon if it remains in a database that has
+    // not yet been re-imported; never present demo data as a real village.
+    const realRows = ((rows as RpcRow[]) ?? []).filter((row) => {
+      const lowerName = row.name_kiny.toLowerCase();
+      return row.scope_code !== "RW-01-01-01-001" &&
+        !lowerName.includes("umudugudu w'urugero") &&
+        !lowerName.includes("sample village");
+    });
+
+    const matches: ConfidenceMatch[] = realRows.map((r) => ({
+      scope_code: r.scope_code,
+      name_kiny: r.name_kiny,
+      name_eng: r.name_eng,
+      level: r.level as ConfidenceMatch["level"],
+      confidence: Number(r.confidence),
+      intersection_area_m2: Number(r.intersection_area_m2),
+    }));
 
     // --- Error: Point in gap (no intersection) ---
     if (matches.length === 0) {
