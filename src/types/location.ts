@@ -29,6 +29,7 @@ export interface LocateSuccess {
   status: "success";
   matches: ConfidenceMatch[];   // sorted by confidence DESC
   hierarchy: {
+    province?: ConfidenceMatch;
     village?: ConfidenceMatch;
     cell?: ConfidenceMatch;
     sector?: ConfidenceMatch;
