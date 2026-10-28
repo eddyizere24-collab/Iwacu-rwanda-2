@@ -16,10 +16,10 @@ export async function createSupabaseServerClient() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet: Array<{ name: string; value: string; options?: Record<string, unknown> }>) {
+        setAll(cookiesToSet) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options as any)
+              cookieStore.set(name, value, options)
             );
           } catch {
             // Called from a Server Component — ignore.
@@ -30,26 +30,18 @@ export async function createSupabaseServerClient() {
   );
 }
 
-export function isSupabaseConfigured(): boolean {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  return Boolean(
-    url &&
-      key &&
-      !url.includes("placeholder") &&
-      !url.includes("xxxxxxxx") &&
-      !key.includes("eyJ...")
-  );
-}
-
 /**
  * Service-role client. Bypasses RLS. Use ONLY on the server for
  * geospatial calculations and admin operations that require elevated rights.
  * Never expose this client or its key to the browser.
  */
 export function createSupabaseServiceClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder-service-role-key";
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url || !key) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_URL");
+  }
 
   return createClient(url, key, {
     auth: {
