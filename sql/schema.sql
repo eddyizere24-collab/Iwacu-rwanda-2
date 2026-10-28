@@ -1,5 +1,5 @@
 -- =============================================================================
--- IWACU RWANDA — PostgreSQL + PostGIS Schema (MVP: Gasabo District)
+-- IWACU RWANDA — PostgreSQL + PostGIS Schema (Nationwide administrative boundaries)
 -- =============================================================================
 -- Strict compliance: NCSA Law No. 058/2021, Zero PII to LLM, Optimistic Locking
 -- SRID 4326, GiST indexes, Row Level Security, Temporal leaders
@@ -76,7 +76,7 @@ CREATE INDEX idx_boundaries_parent ON boundaries (parent_id);
 CREATE INDEX idx_boundaries_valid ON boundaries (valid_from, valid_to)
   WHERE valid_to IS NULL;
 
-COMMENT ON TABLE boundaries IS 'Administrative boundaries (MVP: Gasabo District ADM5 villages). SRID 4326.';
+COMMENT ON TABLE boundaries IS 'Administrative boundaries built from NISR 2022 village polygons, with parent cell, sector and district geometries aggregated in PostGIS. SRID 4326.';
 COMMENT ON COLUMN boundaries.path IS 'ltree materialized path for fast ancestor/descendant queries';
 COMMENT ON COLUMN boundaries.version IS 'Optimistic locking version for concurrent admin edits';
 
@@ -468,6 +468,164 @@ $$;
 
 GRANT EXECUTE ON FUNCTION ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
   TO service_role;
+
+
+-- -----------------------------------------------------------------------------
+-- NATIONWIDE BATCH INGEST (used by scripts/ingest-boundaries.ts)
+-- Inserts village polygons and incrementally dissolves them into parent
+-- cell/sector/district boundaries. Re-running is safe (idempotent upsert).
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION ingest_boundary_batch(p_features JSONB)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $
+DECLARE
+  v_village_count INTEGER := 0;
+BEGIN
+  IF jsonb_typeof(p_features) <> 'array' THEN
+    RAISE EXCEPTION 'p_features must be a JSON array';
+  END IF;
+
+  -- Upsert the official village geometries.
+  WITH parsed AS (
+    SELECT *
+    FROM jsonb_to_recordset(p_features) AS x(
+      scope_code TEXT,
+      path TEXT,
+      name_kiny TEXT,
+      name_eng TEXT,
+      level TEXT,
+      geom JSONB,
+      district_scope_code TEXT,
+      district_name TEXT,
+      sector_scope_code TEXT,
+      sector_name TEXT,
+      cell_scope_code TEXT,
+      cell_name TEXT
+    )
+  ),
+  normalized AS (
+    SELECT
+      p.*,
+      ST_Multi(
+        ST_CollectionExtract(
+          ST_MakeValid(
+            ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)
+          ),
+          3
+        )
+      ) AS polygon_geom
+    FROM parsed p
+    WHERE p.geom IS NOT NULL
+  )
+  INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
+  SELECT scope_code, path::ltree, name_kiny, name_eng, level::boundary_level, polygon_geom
+  FROM normalized
+  WHERE scope_code IS NOT NULL
+    AND path IS NOT NULL
+    AND name_kiny IS NOT NULL
+    AND polygon_geom IS NOT NULL
+    AND NOT ST_IsEmpty(polygon_geom)
+  ON CONFLICT (scope_code) DO UPDATE SET
+    path = EXCLUDED.path,
+    name_kiny = EXCLUDED.name_kiny,
+    name_eng = EXCLUDED.name_eng,
+    level = EXCLUDED.level,
+    geom = EXCLUDED.geom,
+    updated_at = now(),
+    version = boundaries.version + 1;
+
+  GET DIAGNOSTICS v_village_count = ROW_COUNT;
+
+  -- District polygons: merge each batch with the prior batches' geometry.
+  WITH parsed AS (
+    SELECT *
+    FROM jsonb_to_recordset(p_features) AS x(
+      scope_code TEXT, path TEXT, name_kiny TEXT, name_eng TEXT, level TEXT,
+      geom JSONB, district_scope_code TEXT, district_name TEXT,
+      sector_scope_code TEXT, sector_name TEXT, cell_scope_code TEXT, cell_name TEXT
+    )
+  ),
+  normalized AS (
+    SELECT p.*,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3)) AS polygon_geom
+    FROM parsed p WHERE p.geom IS NOT NULL
+  )
+  INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
+  SELECT district_scope_code, replace(district_scope_code, '-', '.')::ltree,
+         district_name, district_name, 'district'::boundary_level,
+         ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+  FROM normalized
+  WHERE district_scope_code IS NOT NULL AND district_name IS NOT NULL
+    AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+  GROUP BY district_scope_code, district_name
+  ON CONFLICT (scope_code) DO UPDATE SET
+    name_kiny = EXCLUDED.name_kiny, name_eng = EXCLUDED.name_eng,
+    geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(boundaries.geom, EXCLUDED.geom))), 3)),
+    updated_at = now(), version = boundaries.version + 1;
+
+  -- Sector polygons.
+  WITH parsed AS (
+    SELECT *
+    FROM jsonb_to_recordset(p_features) AS x(
+      scope_code TEXT, path TEXT, name_kiny TEXT, name_eng TEXT, level TEXT,
+      geom JSONB, district_scope_code TEXT, district_name TEXT,
+      sector_scope_code TEXT, sector_name TEXT, cell_scope_code TEXT, cell_name TEXT
+    )
+  ),
+  normalized AS (
+    SELECT p.*,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3)) AS polygon_geom
+    FROM parsed p WHERE p.geom IS NOT NULL
+  )
+  INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
+  SELECT sector_scope_code, replace(sector_scope_code, '-', '.')::ltree,
+         sector_name, sector_name, 'sector'::boundary_level,
+         ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+  FROM normalized
+  WHERE sector_scope_code IS NOT NULL AND sector_name IS NOT NULL
+    AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+  GROUP BY sector_scope_code, sector_name
+  ON CONFLICT (scope_code) DO UPDATE SET
+    name_kiny = EXCLUDED.name_kiny, name_eng = EXCLUDED.name_eng,
+    geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(boundaries.geom, EXCLUDED.geom))), 3)),
+    updated_at = now(), version = boundaries.version + 1;
+
+  -- Cell polygons.
+  WITH parsed AS (
+    SELECT *
+    FROM jsonb_to_recordset(p_features) AS x(
+      scope_code TEXT, path TEXT, name_kiny TEXT, name_eng TEXT, level TEXT,
+      geom JSONB, district_scope_code TEXT, district_name TEXT,
+      sector_scope_code TEXT, sector_name TEXT, cell_scope_code TEXT, cell_name TEXT
+    )
+  ),
+  normalized AS (
+    SELECT p.*,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3)) AS polygon_geom
+    FROM parsed p WHERE p.geom IS NOT NULL
+  )
+  INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
+  SELECT cell_scope_code, replace(cell_scope_code, '-', '.')::ltree,
+         cell_name, cell_name, 'cell'::boundary_level,
+         ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+  FROM normalized
+  WHERE cell_scope_code IS NOT NULL AND cell_name IS NOT NULL
+    AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+  GROUP BY cell_scope_code, cell_name
+  ON CONFLICT (scope_code) DO UPDATE SET
+    name_kiny = EXCLUDED.name_kiny, name_eng = EXCLUDED.name_eng,
+    geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(boundaries.geom, EXCLUDED.geom))), 3)),
+    updated_at = now(), version = boundaries.version + 1;
+
+  RETURN v_village_count;
+END;
+$;
+
+GRANT EXECUTE ON FUNCTION ingest_boundary_batch(JSONB) TO service_role;
+
 
 -- -----------------------------------------------------------------------------
 -- GRANTS (Supabase roles)
