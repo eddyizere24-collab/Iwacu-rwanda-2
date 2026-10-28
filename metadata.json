@@ -1,0 +1,8 @@
+{
+  "name": "IWACU RWANDA",
+  "description": "Civic geospatial platform for locating local leaders in Rwanda (Gasabo District MVP) with NCSA compliance.",
+  "prompt": "Civic geospatial platform for locating local leaders in Rwanda (Gasabo District MVP)",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
