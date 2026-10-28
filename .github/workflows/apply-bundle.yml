@@ -1,0 +1,37 @@
+name: Apply IWACU RWANDA source bundle
+on:
+  push:
+    branches:
+      - replace-with-latest-upload-2026-10-28
+    paths:
+      - staging/iwacu-bundle/READY
+permissions:
+  contents: write
+jobs:
+  replace-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          ref: replace-with-latest-upload-2026-10-28
+      - name: Assemble source archive
+        run: |
+          cat staging/iwacu-bundle/part*.b64 | base64 --decode > /tmp/iwacu-source.tar.gz
+          tar -tzf /tmp/iwacu-source.tar.gz >/dev/null
+      - name: Replace old repository files
+        run: |
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name 'staging' -exec rm -rf {} +
+          tar -xzf /tmp/iwacu-source.tar.gz -C .
+          rm -rf staging
+      - name: Validate production build
+        run: |
+          npm install --no-package-lock
+          npm run build
+      - name: Commit exact source replacement
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Replace IWACU RWANDA 2 with latest AI Studio source bundle"
+          git push origin HEAD:replace-with-latest-upload-2026-10-28
