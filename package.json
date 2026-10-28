@@ -2,7 +2,7 @@
   "name": "iwacu-rwanda",
   "version": "0.1.0",
   "private": true,
-  "description": "IWACU RWANDA — Civic geospatial platform for locating local leaders (Gasabo MVP)",
+  "description": "IWACU RWANDA — Nationwide civic geospatial platform for locating villages and local leaders",
   "scripts": {
     "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "next build",
@@ -10,7 +10,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "db:migrate": "echo 'Run sql/schema.sql against your Supabase project via the SQL Editor'",
-    "ingest:boundaries": "tsx scripts/ingest-boundaries.ts"
+    "ingest:boundaries": "tsx scripts/ingest-boundaries.ts",
+    "download:boundaries": "tsx scripts/download-rwanda-boundaries.ts",
+    "ingest:national-boundaries": "npm run download:boundaries && npm run ingest:boundaries -- public/offline/rwanda-village-boundaries.geojson"
   },
   "dependencies": {
     "@google/genai": "^2.31.0",
