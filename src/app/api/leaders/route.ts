@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { isSupabaseConfigured, createSupabaseServiceClient } from "@/lib/supabase/server";
-import { getMockLeaders, toPublicLeader } from "@/lib/mock-data";
+import { getMockLeaders, toPublicLeader, addMockLeader, deleteMockLeader } from "@/lib/mock-data";
 import { maskPhone } from "@/lib/security/mask";
 import type { LeaderPublic } from "@/types/leader";
 
@@ -23,8 +23,13 @@ const PatchLeaderSchema = z.object({
     "Other",
   ]),
   phone_number: z.string().optional(),
+  whatsapp_number: z.string().optional(),
   email: z.string().email().nullable().optional(),
   photo_url: z.string().url().nullable().optional(),
+  vision_priorities: z.string().nullable().optional(),
+  office_hours: z.string().nullable().optional(),
+  social_media: z.record(z.string()).nullable().optional(),
+  admin_dossier: z.any().optional(),
 });
 
 export async function GET(req: NextRequest) {
@@ -32,16 +37,16 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const scopeCode = searchParams.get("scope_code") || "RW-01";
     const reveal = searchParams.get("reveal") === "true";
+    const includeDossier = searchParams.get("include_dossier") === "true" || reveal;
 
     if (!isSupabaseConfigured()) {
       const records = getMockLeaders().filter((l) =>
-        l.scope_code.startsWith(scopeCode)
+        scopeCode === "RW" ? true : l.scope_code.startsWith(scopeCode)
       );
 
       const leaders: LeaderPublic[] = records.map((l) => {
-        const pub = toPublicLeader(l);
+        const pub = toPublicLeader(l, includeDossier);
         if (reveal && l.phone_number) {
-          // If admin requested reveal, provide full phone
           (pub as LeaderPublic & { phone_number?: string }).phone_number = l.phone_number;
         }
         return pub;
@@ -51,7 +56,7 @@ export async function GET(req: NextRequest) {
     }
 
     const supabase = createSupabaseServiceClient();
-    const query = supabase
+    let query = supabase
       .from("leaders")
       .select(
         `
@@ -69,17 +74,20 @@ export async function GET(req: NextRequest) {
         boundaries!inner ( name_kiny, name_eng, level )
       `
       )
-      .like("scope_code", `${scopeCode}%`)
       .is("valid_to", null);
+
+    if (scopeCode !== "RW") {
+      query = query.like("scope_code", `${scopeCode}%`);
+    }
 
     const { data, error } = await query;
     if (error) {
       console.warn("[leaders GET] DB error — falling back to mock data:", error.message);
       const records = getMockLeaders().filter((l) =>
-        l.scope_code.startsWith(scopeCode)
+        scopeCode === "RW" ? true : l.scope_code.startsWith(scopeCode)
       );
       const fallbackLeaders: LeaderPublic[] = records.map((l) => {
-        const pub = toPublicLeader(l);
+        const pub = toPublicLeader(l, includeDossier);
         if (reveal && l.phone_number) {
           (pub as LeaderPublic & { phone_number?: string }).phone_number = l.phone_number;
         }
@@ -106,6 +114,7 @@ export async function GET(req: NextRequest) {
         boundary_name_eng: b?.name_eng ?? null,
         level: b?.level ?? "",
         phone_masked: maskPhone(row.phone_number as string | null),
+        phone_raw: reveal ? (row.phone_number as string) : undefined,
       };
     });
 
@@ -115,7 +124,7 @@ export async function GET(req: NextRequest) {
     const records = getMockLeaders();
     return NextResponse.json({
       status: "success",
-      leaders: records.map(toPublicLeader),
+      leaders: records.map((r) => toPublicLeader(r, false)),
     });
   }
 }
@@ -144,8 +153,21 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const { id, version, first_name, last_name, role, phone_number, email, photo_url } =
-      parsed.data;
+    const {
+      id,
+      version,
+      first_name,
+      last_name,
+      role,
+      phone_number,
+      whatsapp_number,
+      email,
+      photo_url,
+      vision_priorities,
+      office_hours,
+      social_media,
+      admin_dossier,
+    } = parsed.data;
 
     if (!isSupabaseConfigured()) {
       const mockList = getMockLeaders();
@@ -172,6 +194,7 @@ export async function PATCH(req: NextRequest) {
                 role: existing.role,
                 email: existing.email,
                 photo_url: existing.photo_url,
+                phone_number: existing.phone_number,
               },
               your_data: {
                 first_name,
@@ -179,6 +202,7 @@ export async function PATCH(req: NextRequest) {
                 role,
                 email,
                 photo_url,
+                phone_number,
               },
             },
           },
@@ -191,20 +215,24 @@ export async function PATCH(req: NextRequest) {
       existing.last_name = last_name;
       existing.role = role;
       if (phone_number !== undefined) existing.phone_number = phone_number;
+      if (whatsapp_number !== undefined) existing.whatsapp_number = whatsapp_number;
       if (email !== undefined) existing.email = email;
       if (photo_url !== undefined) existing.photo_url = photo_url;
+      if (vision_priorities !== undefined) existing.vision_priorities = vision_priorities;
+      if (office_hours !== undefined) existing.office_hours = office_hours;
+      if (social_media !== undefined) existing.social_media = social_media as any;
+      if (admin_dossier !== undefined) existing.admin_dossier = admin_dossier;
       existing.version += 1;
 
       return NextResponse.json({
         status: "success",
-        leader: toPublicLeader(existing),
+        leader: toPublicLeader(existing, true),
       });
     }
 
     // Supabase DB path
     const supabase = createSupabaseServiceClient();
 
-    // 1. Fetch current version to test optimistic lock
     const { data: current, error: fetchErr } = await supabase
       .from("leaders")
       .select("*")
@@ -233,7 +261,6 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    // 2. Perform update with incremented version
     const updatePayload: Record<string, unknown> = {
       first_name,
       last_name,
@@ -299,6 +326,101 @@ export async function PATCH(req: NextRequest) {
     console.error("[leaders PATCH] error:", err);
     return NextResponse.json(
       { status: "error", message_kiny: "Ikibazo cy'urukurikirane" },
+      { status: 500 }
+    );
+  }
+}
+
+const CreateLeaderSchema = z.object({
+  first_name: z.string().min(1),
+  last_name: z.string().min(1),
+  role: z.enum([
+    "Village Leader",
+    "Cell Executive Secretary",
+    "Sector Executive Secretary",
+    "Mayor",
+    "Vice Mayor",
+    "District Executive Secretary",
+    "Other",
+  ]),
+  phone_number: z.string().min(8),
+  whatsapp_number: z.string().optional(),
+  email: z.string().email().nullable().optional(),
+  photo_url: z.string().url().nullable().optional(),
+  scope_code: z.string().min(2),
+  boundary_name_kiny: z.string().min(1),
+  boundary_name_eng: z.string().optional(),
+  level: z.string().min(1),
+  is_verified: z.boolean().optional(),
+  verified_by: z.string().optional(),
+  vision_priorities: z.string().optional(),
+  office_hours: z.string().optional(),
+  social_media: z.record(z.string()).optional(),
+  admin_dossier: z.any().optional(),
+});
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const parsed = CreateLeaderSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { status: "error", message_kiny: "Amakuru ntiyuzuye neza", errors: parsed.error.flatten() },
+        { status: 422 }
+      );
+    }
+
+    const created = addMockLeader({
+      first_name: parsed.data.first_name,
+      last_name: parsed.data.last_name,
+      role: parsed.data.role,
+      phone_number: parsed.data.phone_number,
+      whatsapp_number: parsed.data.whatsapp_number || parsed.data.phone_number,
+      email: parsed.data.email || null,
+      photo_url: parsed.data.photo_url || null,
+      scope_code: parsed.data.scope_code,
+      boundary_name_kiny: parsed.data.boundary_name_kiny,
+      boundary_name_eng: parsed.data.boundary_name_eng || parsed.data.boundary_name_kiny,
+      level: parsed.data.level,
+      is_verified: parsed.data.is_verified ?? true,
+      verified_by: parsed.data.verified_by || "Urwego rw'Akarere",
+      vision_priorities: parsed.data.vision_priorities || null,
+      office_hours: parsed.data.office_hours || "Kuwa Mbere – Kuwa Gatanu: 08:00 – 17:00",
+      social_media: parsed.data.social_media as any,
+      admin_dossier: parsed.data.admin_dossier || null,
+    });
+
+    return NextResponse.json({
+      status: "success",
+      leader: toPublicLeader(created, true),
+    });
+  } catch (err) {
+    console.error("[leaders POST] error:", err);
+    return NextResponse.json(
+      { status: "error", message_kiny: "Ikibazo cy'urukurikirane mu kubika." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+    if (!id) {
+      return NextResponse.json({ status: "error", message_kiny: "Shyiramo id y'umuyobozi" }, { status: 400 });
+    }
+
+    const removed = deleteMockLeader(id);
+    if (!removed) {
+      return NextResponse.json({ status: "error", message_kiny: "Umuyobozi ntabonetse" }, { status: 404 });
+    }
+
+    return NextResponse.json({ status: "success", message_kiny: "Umuyobozi yakuwemo neza." });
+  } catch (err) {
+    console.error("[leaders DELETE] error:", err);
+    return NextResponse.json(
+      { status: "error", message_kiny: "Ikibazo mu gukura umuyobozi." },
       { status: 500 }
     );
   }

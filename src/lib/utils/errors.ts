@@ -1,68 +1,130 @@
 import type { LocationErrorCode, LocateError } from "@/types/location";
 
-const ERROR_MESSAGES: Record<
-  LocationErrorCode,
-  { kiny: string; eng: string }
-> = {
+export interface D1ErrorInfo {
+  title: string;
+  message: string;
+  buttonText?: string;
+  isOwnFault: boolean; // false = "ikibazo cyacu" / not blaming user
+}
+
+export const D1_ERRORS: Record<string, D1ErrorInfo> = {
   GPS_DENIED: {
-    kiny: "Wanze ko twakoresha GPS. Fungura amarebe y’uburyo bwo gukoresha ahantu cyangwa shakisha manuelle.",
-    eng: "Location permission denied. Enable location access or use manual search.",
+    title: "GPS irafunze",
+    message:
+      "Ntidushobora kumenya aho uri kuko telefone itatwemereye. Fungura: Settings › Location (Igenamiterere › Aho uri), wemerere iyi porogaramu.",
+    buttonText: "Ongera ugerageze",
+    isOwnFault: false,
+  },
+  GPS_UNAVAILABLE: {
+    title: "Telefone ntiyabonye aho uri",
+    message: "Reba ko Location ifunguye, hanyuma wongere ugerageze.",
+    buttonText: "Ongera ugerageze",
+    isOwnFault: false,
+  },
+  GPS_TIMEOUT: {
+    title: "Birimo gutinda",
+    message:
+      "GPS ntiyakubonye vuba. Sohoka cyangwa wegere idirishya, hanyuma wongere ugerageze.",
+    buttonText: "Ongera ugerageze",
+    isOwnFault: false,
   },
   GPS_ACCURACY_TOO_LOW: {
-    kiny: "GPS ntabwo iri ku buryo bwiza (accuracy > 150m). Gerageza hanze cyangwa shakisha manuelle.",
-    eng: "GPS accuracy is too low (> 150 m). Try outdoors or use manual search.",
-  },
-  OUTSIDE_RWANDA: {
-    kiny: "Aha hantu ntabwo hari mu Rwanda. Shakisha manuelle cyangwa gerageza GPS mu gihugu.",
-    eng: "This location is outside Rwanda. Use manual search or try GPS inside the country.",
-  },
-  POINT_IN_GAP: {
-    kiny: "Aha hantu ntabwo hagaragara mu mategeko y’ubutegetsi. Gerageza ahantu hafi cyangwa shakisha manuelle.",
-    eng: "This point falls in a data gap. Try a nearby location or manual search.",
-  },
-  POINT_IN_OVERLAP: {
-    kiny: "Aha hantu hagaragara mu bice byinshi. Reba ibice byose n’ibipimo by’icyizere.",
-    eng: "This point lies in an overlap zone. Review all matching areas and their confidence scores.",
-  },
-  CONFIDENCE_TOO_LOW: {
-    kiny: "Ntabwo dushobora kumenya neza aho uri (icyizere < 5%). Gerageza GPS cyangwa shakisha manuelle.",
-    eng: "Confidence is too low (< 5%). Improve GPS signal or use manual search.",
-  },
-  MISSING_LEADER_CONTACT: {
-    kiny: "Umuyobozi aboneka ariko nta numero ya telefone ihari. Gerageza nyuma.",
-    eng: "Leader found but contact number is missing. Please try again later.",
-  },
-  NETWORK_ERROR: {
-    kiny: "Ikibazo cy’urukurikirane. Gerageza nanone cyangwa reba niba ufite interineti.",
-    eng: "Network error. Check your connection and try again.",
-  },
-  NOT_FOUND: {
-    kiny: "Icyo wasabye nticyabonetse. Gerageza gushakisha ikindi.",
-    eng: "The requested resource was not found.",
-  },
-  SLOW_NETWORK: {
-    kiny: "Urukurikirane rurasize. Tegereza gato...",
-    eng: "Network is slow. Please wait...",
-  },
-  OFFLINE_CACHE: {
-    kiny: "Uri offline. Dukoresha amakuru yabitswe (Gasabo gusa).",
-    eng: "You are offline. Using cached data (Gasabo only).",
+    title: "Aho uri ntibigaragara neza",
+    message:
+      "Hagarara ahantu hafunguye, utari mu nzu, hanyuma wongere ugerageze.",
+    buttonText: "Ongera ugerageze",
+    isOwnFault: false,
   },
   BROWSER_NOT_SUPPORTED: {
-    kiny: "Browser yawe ntabwo ishyigikiwe. Koresha Chrome, Firefox cyangwa Safari ya vuba.",
-    eng: "Your browser is not supported. Please use a recent Chrome, Firefox or Safari.",
+    title: "Iyi porogaramu ntishobora kumenya aho uri",
+    message: "Gerageza indi porogaramu yo kureba imbuga (nka Chrome).",
+    isOwnFault: false,
+  },
+  INVALID_COORDINATES: {
+    title: "Aho uri ntihasomye neza",
+    message: "Ongera ugerageze.",
+    buttonText: "Ongera ugerageze",
+    isOwnFault: false,
+  },
+  OUTSIDE_RWANDA: {
+    title: "Uri hanze y'u Rwanda",
+    message:
+      "Iyi porogaramu ikora mu Rwanda gusa. Nimero z'ubutabazi z'u Rwanda ziracyaboneka.",
+    isOwnFault: false,
+  },
+  POINT_IN_GAP: {
+    title: "Ntitwabonye umudugudu wawe",
+    message:
+      "Aho uri ntihaboneka mu mipaka dufite. Egera ahandi, wongere ugerageze.",
+    buttonText: "Ongera ugerageze",
+    isOwnFault: false,
+  },
+  POINT_IN_OVERLAP: {
+    title: "Uri ku mupaka",
+    message:
+      "Uri hagati y'imidugudu ibiri. Turakwereka abayobozi b'iyo yombi.",
+    isOwnFault: false,
+  },
+  CONFIDENCE_TOO_LOW: {
+    title: "Ntituzi neza aho uri",
+    message:
+      "Ntidushobora kwemeza umudugudu wawe. Ongera ugerageze uri ahafunguye.",
+    buttonText: "Ongera ugerageze",
+    isOwnFault: false,
+  },
+  DATA_NOT_AVAILABLE: {
+    title: "Aka gace ntikaraboneka",
+    message:
+      "Imipaka y'aka gace ntiratugeraho. Si ikibazo cya telefone yawe. Mwihangane, turakomeza kongeramo amakuru.",
+    isOwnFault: false,
+  },
+  DATABASE_ERROR: {
+    title: "Hari ikibazo cyacu",
+    message:
+      "Ntitubashije kubona amakuru ubu. Si ikibazo cyawe. Mwihangane, ongera ugerageze nyuma y'akanya gato.",
+    buttonText: "Ongera ugerageze",
+    isOwnFault: false,
+  },
+  NETWORK_ERROR: {
+    title: "Interineti ntirimo gukora",
+    message:
+      "Ntitwabashije kugera ku rubuga. Reba interineti yawe, hanyuma wongere ugerageze.",
+    buttonText: "Ongera ugerageze",
+    isOwnFault: false,
+  },
+  SLOW_NETWORK: {
+    title: "Interineti iratinda",
+    message: "Tegereza gato…",
+    isOwnFault: false,
+  },
+  OFFLINE_CACHE: {
+    title: "Nta interineti",
+    message:
+      "Dukoresha amakuru abitswe kuri telefone yawe. Abayobozi ntibagaragara, ariko nimero z'ubutabazi zirakora.",
+    isOwnFault: false,
   },
   RATE_LIMIT: {
-    kiny: "Wakoze ibisabwa byinshi cyane. Tegereza gato hanyuma ugerageze nanone.",
-    eng: "Too many requests. Please wait a moment and try again.",
+    title: "Mwihangane, tegereza gato",
+    message:
+      "Wakanze inshuro nyinshi. Tegereza umunota umwe, hanyuma wongere ugerageze.",
+    isOwnFault: false,
   },
-  CONCURRENT_EDIT_CONFLICT: {
-    kiny: "Ubundi mukoresha ahinduye amakuru. Reba itandukaniro hanyuma wemeze.",
-    eng: "Another user modified this record. Review the difference and confirm.",
+  NOT_FOUND: {
+    title: "Ntibyabonetse",
+    message: "Ibyo ushaka ntibihari.",
+    isOwnFault: false,
   },
   LEADER_MISSING: {
-    kiny: "Nta muyobozi uhari kuri uyu mwanya. Gerageza nyuma.",
-    eng: "No leader is currently assigned to this scope.",
+    title: "Nta muyobozi uremezwa",
+    message:
+      "Nta muyobozi uremezwa aha. Reba ab'akagari cyangwa ab'umurenge.",
+    isOwnFault: false,
+  },
+  MISSING_LEADER_CONTACT: {
+    title: "Nta buryo bwo kuvugana",
+    message:
+      "Uyu muyobozi ntaragira uburyo bwo kuvugana bwanditswe. Reba abayobozi b'urwego rukurikira.",
+    isOwnFault: false,
   },
 };
 
@@ -70,12 +132,16 @@ export function createLocateError(
   code: LocationErrorCode,
   details?: Record<string, unknown>
 ): LocateError {
-  const msg = ERROR_MESSAGES[code];
+  const info = D1_ERRORS[code] || {
+    title: "Ikibazo cyabaye",
+    message: "Ongera ugerageze.",
+    isOwnFault: false,
+  };
   return {
     status: "error",
     code,
-    message_kiny: msg.kiny,
-    message_eng: msg.eng,
+    message_kiny: info.message,
+    message_eng: info.title,
     details,
   };
 }

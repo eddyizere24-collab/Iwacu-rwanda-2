@@ -4,48 +4,63 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Rwandan National Palette: Sky Blue, Sun Yellow, Forest Green */
+    --background: 210 30% 98%; /* Soft radiant porcelain / morning sky */
+    --foreground: 218 39% 14%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 218 39% 14%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%; /* blue-600 */
-    --primary-foreground: 210 40% 98%;
-    --secondary: 142.1 76.2% 36.3%; /* green-600 */
-    --secondary-foreground: 355.7 100% 97.3%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
+    --popover-foreground: 218 39% 14%;
+    
+    /* Rwandan Sky Blue: #00A3E0 */
+    --primary: 197 100% 44%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* Rwandan Forest Green: #20603D */
+    --secondary: 147 50% 25%;
+    --secondary-foreground: 0 0% 100%;
+    
+    /* Rwandan Golden Sun: #FAD201 */
+    --accent: 49 99% 49%;
+    --accent-foreground: 35 100% 15%;
+    
+    --muted: 210 25% 95%;
+    --muted-foreground: 215 16% 45%;
+    
+    --destructive: 0 84% 60%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.75rem;
+    
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 197 100% 44%;
+    --radius: 0.875rem;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
+    --background: 220 30% 8%;
     --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
+    --card: 220 28% 12%;
     --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
+    --popover: 220 28% 12%;
     --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%; /* blue-500 for dark */
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 142.1 70.6% 45.3%; /* green-500 for dark */
-    --secondary-foreground: 144.9 80.4% 10%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    
+    /* Glowing Sky Blue in dark mode */
+    --primary: 197 100% 48%;
+    --primary-foreground: 0 0% 100%;
+    
+    /* Vivid Rwandan Green in dark mode */
+    --secondary: 147 60% 36%;
+    --secondary-foreground: 0 0% 100%;
+    
+    /* Radiant Golden Sun in dark mode */
+    --accent: 49 99% 52%;
+    --accent-foreground: 35 100% 10%;
+    
+    --muted: 220 20% 18%;
+    --muted-foreground: 215 20% 65%;
+    --border: 220 20% 20%;
+    --input: 220 20% 20%;
+    --ring: 197 100% 48%;
   }
 }
 
@@ -56,7 +71,7 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   /* Minimum 44×44px touch targets (WCAG 2.1 AA) */
@@ -68,24 +83,31 @@
   }
 }
 
-/* Skeleton loader for slow network */
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
+/* Subtle Rwandan Golden Sun Glow Effect */
+.sun-glow {
+  box-shadow: 0 0 25px rgba(250, 210, 1, 0.35), 0 0 50px rgba(0, 163, 224, 0.2);
+}
+
+.sun-pulse {
+  animation: pulse-sun 3s ease-in-out infinite;
+}
+
+@keyframes pulse-sun {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 12px rgba(250, 210, 1, 0.5));
   }
-  100% {
-    background-position: 200% 0;
+  50% {
+    transform: scale(1.04);
+    filter: drop-shadow(0 0 22px rgba(250, 210, 1, 0.8));
   }
 }
 
-.skeleton {
-  @apply relative overflow-hidden rounded-md bg-muted;
-  background: linear-gradient(
-    90deg,
-    hsl(var(--muted)) 25%,
-    hsl(var(--muted-foreground) / 0.1) 50%,
-    hsl(var(--muted)) 75%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+/* Agaseke / Imigongo subtle geometric background accents */
+.bg-rwandan-gradient {
+  background: linear-gradient(135deg, rgba(0, 163, 224, 0.08) 0%, rgba(250, 210, 1, 0.06) 50%, rgba(32, 96, 61, 0.08) 100%);
+}
+
+.dark .bg-rwandan-gradient {
+  background: linear-gradient(135deg, rgba(0, 163, 224, 0.15) 0%, rgba(250, 210, 1, 0.08) 50%, rgba(32, 96, 61, 0.15) 100%);
 }

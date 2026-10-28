@@ -1,17 +1,17 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import "./globals.css";
-import { EmergencyBar } from "@/components/EmergencyBar";
+import { AppHeader } from "@/components/AppHeader";
+import { EmergencyStrip } from "@/components/EmergencyStrip";
 
 export const metadata: Metadata = {
-  title: "IWACU RWANDA",
+  title: "IWACU RWANDA — Menya abayobozi b'aho uri",
   description:
-    "Civic geospatial platform for locating local leaders in Rwanda (Gasabo District MVP) with NCSA compliance.",
+    "Kanda «Menya aho ndi», ubone umudugudu wawe n'abayobozi bawo, ubahamagare. Harimo na nimero z'ubutabazi.",
   manifest: "/manifest.json",
   openGraph: {
-    title: "IWACU RWANDA",
+    title: "IWACU RWANDA — Menya abayobozi b'aho uri",
     description:
-      "Civic geospatial platform for locating local leaders in Rwanda (Gasabo District MVP) with NCSA compliance.",
+      "Kanda «Menya aho ndi», ubone umudugudu wawe n'abayobozi bawo, ubahamagare. Harimo na nimero z'ubutabazi.",
     type: "website",
   },
 };
@@ -22,77 +22,43 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="rw">
+    <html lang="rw" className="scroll-smooth">
       <head>
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#2563eb" />
+        <meta name="theme-color" content="#00A3E0" />
       </head>
-      <body className="min-h-screen bg-background text-foreground antialiased selection:bg-blue-600 selection:text-white">
-        <EmergencyBar />
+      <body className="min-h-screen bg-background text-foreground antialiased selection:bg-[#00A3E0] selection:text-white pb-24">
+        {/* Top Header with Rwandan Sun & Agaseke branding */}
+        <AppHeader />
 
-        <header className="border-b border-border bg-card/80 backdrop-blur sticky top-0 z-40">
-          <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6">
-            <Link href="/" className="flex items-center gap-2.5 group">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white font-bold shadow-md shadow-blue-600/20 group-hover:scale-105 transition-transform">
-                I
-              </div>
-              <div>
-                <span className="font-bold tracking-tight text-foreground text-base">
-                  IWACU RWANDA
-                </span>
-                <span className="block text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                  Gasabo MVP · NCSA Law No. 058/2021
-                </span>
-              </div>
-            </Link>
+        {/* Main Viewport Content */}
+        <main id="main-content" className="relative">
+          {children}
+        </main>
 
-            <nav className="flex items-center gap-3">
-              <span className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground">
-                Kinyarwanda
-              </span>
-              <Link
-                href="/admin/login"
-                className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-border px-3.5 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-              >
-                Injira nk’umuyobozi
-              </Link>
-            </nav>
-          </div>
-        </header>
+        {/* Fixed Emergency Strip at the bottom */}
+        <EmergencyStrip />
 
-        <main>{children}</main>
-
-        <footer className="border-t border-border mt-16 py-8 text-center text-xs text-muted-foreground">
-          <div className="mx-auto max-w-5xl px-4 space-y-3">
-            <div className="flex flex-wrap items-center justify-center gap-3 text-sm font-semibold text-foreground">
-              <a href="tel:112" className="text-blue-600 hover:underline">
-                112 Polisi
-              </a>
-              <span className="text-muted-foreground">·</span>
-              <a href="tel:113" className="text-orange-600 hover:underline">
-                113 Abazimya umuriro
-              </a>
-              <span className="text-muted-foreground">·</span>
-              <a href="tel:912" className="text-red-600 hover:underline">
-                912 Ambulance
-              </a>
-            </div>
-            <p>
-              IWACU RWANDA · Menya ahantu uri n’abayobozi bawe mu Gasabo.
-            </p>
-            <p className="text-[11px] text-muted-foreground/80">
-              Amakuru n’umwirondoro byubahiriza itegeko NCSA Law No. 058/2021
-              rigenga uburinzi bw’amakuru bwite.
-            </p>
-          </div>
-        </footer>
-
+        {/* Service Worker Registration & Cache Busting */}
         <script
           dangerouslySetInnerHTML={{
             __html: `
               if ('serviceWorker' in navigator) {
                 window.addEventListener('load', () => {
-                  navigator.serviceWorker.register('/sw.js').catch(console.error);
+                  // Purge old caches unconditionally
+                  if ('caches' in window) {
+                    caches.keys().then((keys) => {
+                      keys.forEach((key) => {
+                        if (!key.includes('v2-nocache-html')) {
+                          caches.delete(key);
+                        }
+                      });
+                    });
+                  }
+
+                  navigator.serviceWorker.register('/sw.js').then((reg) => {
+                    reg.update();
+                  }).catch(console.error);
                 });
               }
             `,

@@ -14,25 +14,30 @@ import {
   HelpCircle,
 } from "lucide-react";
 import type { LocationErrorCode } from "@/types/location";
+import { D1_ERRORS } from "@/lib/utils/errors";
 
 interface ErrorDisplayProps {
-  code: LocationErrorCode;
-  messageKiny: string;
+  code: LocationErrorCode | string;
+  messageKiny?: string;
   messageEng?: string | null;
   onRetry?: () => void;
   className?: string;
 }
 
 const ICON_MAP: Record<
-  LocationErrorCode,
+  string,
   React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>
 > = {
   GPS_DENIED: ShieldOff,
+  GPS_UNAVAILABLE: MapPinOff,
+  GPS_TIMEOUT: Clock,
   GPS_ACCURACY_TOO_LOW: MapPinOff,
   OUTSIDE_RWANDA: MapPinOff,
   POINT_IN_GAP: SearchX,
   POINT_IN_OVERLAP: AlertTriangle,
   CONFIDENCE_TOO_LOW: MapPinOff,
+  DATA_NOT_AVAILABLE: SearchX,
+  DATABASE_ERROR: AlertTriangle,
   MISSING_LEADER_CONTACT: Users,
   NETWORK_ERROR: WifiOff,
   NOT_FOUND: SearchX,
@@ -44,62 +49,44 @@ const ICON_MAP: Record<
   LEADER_MISSING: Users,
 };
 
-const TITLE_KINY: Record<LocationErrorCode, string> = {
-  GPS_DENIED: "GPS yanze",
-  GPS_ACCURACY_TOO_LOW: "GPS ntabwo iri ku buryo bwiza",
-  OUTSIDE_RWANDA: "Uri hanze y’u Rwanda",
-  POINT_IN_GAP: "Ahantu hatabonetse",
-  POINT_IN_OVERLAP: "Ahantu hagaragara mu bice byinshi",
-  CONFIDENCE_TOO_LOW: "Icyizere gito cyane",
-  MISSING_LEADER_CONTACT: "Nta numero ya telefone",
-  NETWORK_ERROR: "Ikibazo cy’urukurikirane",
-  NOT_FOUND: "Nticyabonetse",
-  SLOW_NETWORK: "Urukurikirane rurasize",
-  OFFLINE_CACHE: "Uri offline",
-  BROWSER_NOT_SUPPORTED: "Browser ntabwo ishyigikiwe",
-  RATE_LIMIT: "Byinshi cyane",
-  CONCURRENT_EDIT_CONFLICT: "Impinduka zihuye",
-  LEADER_MISSING: "Nta muyobozi uhari",
-};
-
 export function ErrorDisplay({
   code,
   messageKiny,
-  messageEng,
   onRetry,
   className = "",
 }: ErrorDisplayProps) {
+  const d1Info = D1_ERRORS[code];
   const Icon = ICON_MAP[code] ?? HelpCircle;
-  const title = TITLE_KINY[code] ?? "Ikibazo";
+  const title = d1Info?.title ?? "Ikibazo cyabaye";
+  const displayMessage = messageKiny || d1Info?.message || "Mwihangane, ongera ugerageze.";
+  const buttonText = d1Info?.buttonText ?? "Ongera ugerageze";
 
   return (
     <div
       role="alert"
       aria-live="assertive"
-      className={`mx-auto w-full max-w-md rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center shadow-sm ${className}`}
+      className={`mx-auto w-full max-w-md rounded-2xl border border-amber-500/30 bg-card p-6 text-center shadow-lg ${className}`}
     >
-      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
         <Icon className="h-7 w-7" aria-hidden />
       </div>
 
-      <h2 className="mb-2 text-lg font-semibold text-foreground">{title}</h2>
+      <h2 className="mb-2 text-lg font-bold text-foreground tracking-tight">
+        {title}
+      </h2>
 
-      <p className="mb-1 text-sm leading-relaxed text-muted-foreground">
-        {messageKiny}
+      <p className="mb-5 text-xs sm:text-sm leading-relaxed text-muted-foreground">
+        {displayMessage}
       </p>
-
-      {messageEng && (
-        <p className="mb-4 text-xs text-muted-foreground/80">{messageEng}</p>
-      )}
 
       {onRetry && (
         <button
           type="button"
           onClick={onRetry}
-          className="mt-2 inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-background"
+          className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-blue-700 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
         >
-          <RefreshCw className="h-4 w-4" aria-hidden />
-          Ongera ugerageze
+          <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+          <span>{buttonText}</span>
         </button>
       )}
     </div>
