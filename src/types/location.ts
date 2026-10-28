@@ -36,7 +36,6 @@ export interface LocateSuccess {
   };
   leaders: LeaderPublic[];
   source: "gps" | "ip" | "manual" | "offline";
-  warning?: string;
 }
 
 export interface LocateError {
