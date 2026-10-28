@@ -23,7 +23,8 @@ type BoundaryCollection = { type: "FeatureCollection"; features: BoundaryFeature
 
 function field(props: Record<string, unknown>, ...keys: string[]): string {
   for (const key of keys) {
-    const value = props[key] ?? props[key.toLowerCase()] ?? props[key.toUpperCase()];
+    const actualKey = Object.keys(props).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
+    const value = actualKey ? props[actualKey] : undefined;
     if (value !== undefined && value !== null && String(value).trim() !== "") {
       return String(value).trim();
     }
@@ -51,8 +52,7 @@ function scopeCodes(props: Record<string, unknown>) {
 
 function calculateIntersection(
   boundary: BoundaryFeature,
-  accuracyCircle: Feature<Polygon>,
-  circleAreaM2: number
+  accuracyCircle: Feature<Polygon>
 ): number {
   try {
     const intersection = turf.intersect(
@@ -68,7 +68,6 @@ function calculateIntersection(
 }
 
 function asMatch(
-  props: Record<string, unknown>,
   code: string,
   level: ConfidenceMatch["level"],
   confidence: number,
@@ -183,7 +182,7 @@ export async function locateFromOfficialNationalBoundaries(
     const name = field(props, "village");
     if (!codes || !name) continue;
 
-    const intersectionArea = calculateIntersection(feature, circle, circleArea);
+    const intersectionArea = calculateIntersection(feature, circle);
     if (intersectionArea <= 0) continue;
 
     rawMatches.push({
@@ -241,19 +240,19 @@ export async function locateFromOfficialNationalBoundaries(
 
   if (districtName) {
     hierarchy.district = asMatch(
-      top.props, top.codes.district, "district",
+      top.codes.district, "district",
       matches[0].confidence, top.area, districtName
     );
   }
   if (sectorName) {
     hierarchy.sector = asMatch(
-      top.props, top.codes.sector, "sector",
+      top.codes.sector, "sector",
       matches[0].confidence, top.area, sectorName
     );
   }
   if (cellName) {
     hierarchy.cell = asMatch(
-      top.props, top.codes.cell, "cell",
+      top.codes.cell, "cell",
       matches[0].confidence, top.area, cellName
     );
   }
