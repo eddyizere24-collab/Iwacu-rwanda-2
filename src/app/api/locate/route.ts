@@ -220,7 +220,7 @@ async function buildHierarchy(
     code: string;
   }[] = [];
 
-  // Canonical NISR-derived codes: RW-P01-D11-S01-C01-V01.
+  // Canonical NISR-derived codes preserve source IDs, e.g. RW-P1-D11-S1101-C110101-V11010101.
   if (parts[1]?.startsWith("P") && parts[2]?.startsWith("D")) {
     if (parts.length >= 2) prefixes.push({ level: "province", code: parts.slice(0, 2).join("-") });
     if (parts.length >= 3) prefixes.push({ level: "district", code: parts.slice(0, 3).join("-") });
