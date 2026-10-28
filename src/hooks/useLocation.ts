@@ -240,14 +240,14 @@ async function runOfflineConfidence(
     if (typeof caches !== "undefined") {
       try {
         const cache = await caches.open("iwacu-boundaries-v1");
-        response = await cache.match("/offline/gasabo-boundaries.geojson");
+        response = await cache.match("/offline/rwanda-village-boundaries.geojson");
       } catch {
         // Cache API unavailable
       }
     }
     if (!response) {
       try {
-        response = await fetch("/offline/gasabo-boundaries.geojson");
+        response = await fetch("/offline/rwanda-village-boundaries.geojson");
       } catch {
         // Fetch failed
       }
