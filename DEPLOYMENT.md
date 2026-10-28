@@ -88,29 +88,23 @@ You should see the hero page with the button **Menya aho ndi**.
 
 ---
 
-## 6. Ingest Gasabo boundary data
+## 6. Download and ingest nationwide official village boundaries
 
-1. Obtain the official Gasabo ADM5 (Village) GeoJSON from REMA / RLMUA.
-2. Make sure each feature has at least:
-   - `scope_code` (e.g. `RW-01-01-01-001`)
-   - `name_kiny`
-   - `level` = `"village"` (or ADM5)
+The project uses the NISR Village Boundary 2022 public layer. Downloading the source is automated; do not create approximate polygons by hand.
+
+1. Apply the updated `sql/schema.sql` in Supabase SQL Editor before importing. It defines the batch ingest RPC used for nationwide data.
+2. Ensure `.env.local` contains `NEXT_PUBLIC_SUPABASE_URL` and the server-only `SUPABASE_SERVICE_ROLE_KEY`.
 3. Run:
 
 ```bash
-npx tsx scripts/ingest-boundaries.ts ./path/to/gasabo-adm5.geojson
+npm run ingest:national-boundaries
 ```
 
-4. Check the console summary (Inserted / Skipped / Errors).
-5. Optionally copy a simplified version of the same GeoJSON to:
+This downloads the available village polygon dataset to `public/offline/rwanda-village-boundaries.geojson`, validates the download, then imports the village polygons in batches. PostGIS also aggregates parent cell, sector and district polygons from the official village shapes. The import can be rerun safely.
 
-```
-public/offline/gasabo-boundaries.geojson
-```
+**Important source limitation:** NISR describes 14,816 mapped villages out of 14,837 gazetted villages and states that some Lake Kivu area is excluded from geographic coverage. The app must not claim 100% completeness or invent a village when no official polygon matches. The source is from 2022, so recent administrative changes still need official verification.
 
-so the Service Worker can cache it for offline use.
-
----
+The full GeoJSON is generated locally, not automatically committed to GitHub by the script. To include offline map lookup in an offline deployment, include the generated file in that deployment's public assets; online lookup uses the NISR service directly when PostGIS has no matching record.
 
 ## 7. Seed a few leaders (optional for testing)
 
