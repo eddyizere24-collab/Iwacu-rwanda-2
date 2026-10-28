@@ -121,16 +121,18 @@ async function main() {
     const cell = value(props, "cell");
     const sector = value(props, "sector");
     const district = value(props, "district");
-    const provinceId = value(props, "province_id");
     const provinceEng = value(props, "province");
+    const provinceKey = provinceEng.toLowerCase().replace(/\\s+/g, " ").trim();
     const provinceKiny: Record<string, string> = {
-      "1": "Umujyi wa Kigali",
-      "2": "Intara y'Amajyepfo",
-      "3": "Intara y'Iburengerazuba",
-      "4": "Intara y'Amajyaruguru",
-      "5": "Intara y'Iburasirazuba",
+      "city of kigali": "Umujyi wa Kigali",
+      "kigali city": "Umujyi wa Kigali",
+      "kigali": "Umujyi wa Kigali",
+      "southern province": "Intara y'Amajyepfo",
+      "western province": "Intara y'Iburengerazuba",
+      "northern province": "Intara y'Amajyaruguru",
+      "eastern province": "Intara y'Iburasirazuba",
     };
-    const province = provinceKiny[provinceId] ?? provinceEng;
+    const province = provinceKiny[provinceKey] ?? provinceEng;
     if (!village || !cell || !sector || !district || !province || !provinceEng) {
       throw new Error(`Official feature ${id} is missing one or more place names.`);
     }
