@@ -36,6 +36,8 @@ export interface LocateSuccess {
   };
   leaders: LeaderPublic[];
   source: "gps" | "ip" | "manual" | "offline";
+  /** Informational warning returned when a GPS point overlaps administrative boundaries. */
+  warning?: "POINT_IN_OVERLAP";
 }
 
 export interface LocateError {
