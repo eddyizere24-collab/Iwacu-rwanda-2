@@ -1,7 +1,7 @@
 /**
  * Offline Geospatial Confidence Algorithm using @turf/turf.
  * Used by the Service Worker / frontend when navigator.onLine === false.
- * Mirrors the server-side PostGIS logic exactly (MVP: Gasabo ADM5).
+ * Uses downloaded NISR village polygons for nationwide offline confidence.
  */
 
 import * as turf from "@turf/turf";
@@ -16,6 +16,12 @@ export interface OfflineBoundaryProperties {
   name_eng: string | null;
   level: BoundaryLevel;
   path: string;
+  district_scope_code?: string;
+  district_name?: string;
+  sector_scope_code?: string;
+  sector_name?: string;
+  cell_scope_code?: string;
+  cell_name?: string;
 }
 
 export type OfflineBoundaryFeature = Feature<
@@ -72,7 +78,7 @@ function intersectionAreaM2(
  * @param latitude   WGS84 latitude
  * @param longitude  WGS84 longitude
  * @param accuracy   GPS accuracy in meters
- * @param boundaries Cached Gasabo ADM5 FeatureCollection
+ * @param boundaries Cached nationwide NISR village FeatureCollection
  */
 export function calculateConfidenceOffline(
   latitude: number,
@@ -167,23 +173,42 @@ export function calculateConfidenceOffline(
     }
   }
 
-  // Build hierarchy (MVP: only village level is precise; higher levels inherit)
+  // The national download stores each official village polygon once and carries
+  // its parent names/codes as attributes. Derive the administrative hierarchy
+  // from those official attributes without inventing parent polygons.
   const hierarchy: LocateSuccess["hierarchy"] = {};
   const top = matches[0];
   hierarchy.village = top;
 
-  // For higher levels we would walk the path; offline cache may include them.
-  // For MVP we only guarantee village.
-  const cell = boundaries.features.find(
-    (f) =>
-      f.properties.level === "cell" &&
-      top.scope_code.startsWith(f.properties.scope_code)
+  const topFeature = boundaries.features.find(
+    (feature) => feature.properties.scope_code === top.scope_code
   );
-  if (cell) {
+  const properties = topFeature?.properties;
+  if (properties?.district_scope_code && properties.district_name) {
+    hierarchy.district = {
+      scope_code: properties.district_scope_code,
+      name_kiny: properties.district_name,
+      name_eng: properties.district_name,
+      level: "district",
+      confidence: top.confidence,
+      intersection_area_m2: top.intersection_area_m2,
+    };
+  }
+  if (properties?.sector_scope_code && properties.sector_name) {
+    hierarchy.sector = {
+      scope_code: properties.sector_scope_code,
+      name_kiny: properties.sector_name,
+      name_eng: properties.sector_name,
+      level: "sector",
+      confidence: top.confidence,
+      intersection_area_m2: top.intersection_area_m2,
+    };
+  }
+  if (properties?.cell_scope_code && properties.cell_name) {
     hierarchy.cell = {
-      scope_code: cell.properties.scope_code,
-      name_kiny: cell.properties.name_kiny,
-      name_eng: cell.properties.name_eng,
+      scope_code: properties.cell_scope_code,
+      name_kiny: properties.cell_name,
+      name_eng: properties.cell_name,
       level: "cell",
       confidence: top.confidence,
       intersection_area_m2: top.intersection_area_m2,
