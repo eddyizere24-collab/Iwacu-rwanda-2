@@ -52,6 +52,9 @@ type BatchFeature = {
   name_eng: string | null;
   level: string;
   geom: BoundaryGeometry;
+  province_scope_code: string | null;
+  province_name: string | null;
+  province_name_eng: string | null;
   district_scope_code: string | null;
   district_name: string | null;
   sector_scope_code: string | null;
@@ -108,6 +111,9 @@ function mainFeature(feature: SourceFeature, index: number): BatchFeature {
     name_eng: nameEng,
     level: normaliseLevel(props.level),
     geom: feature.geometry,
+    province_scope_code: textValue(props, "province_scope_code") || null,
+    province_name: textValue(props, "province_name") || null,
+    province_name_eng: textValue(props, "province_name_eng") || null,
     district_scope_code: textValue(props, "district_scope_code") || null,
     district_name: textValue(props, "district_name") || null,
     sector_scope_code: textValue(props, "sector_scope_code") || null,
