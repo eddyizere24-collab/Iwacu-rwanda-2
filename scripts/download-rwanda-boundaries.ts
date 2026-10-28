@@ -34,6 +34,7 @@ function value(properties: Record<string, unknown>, key: string): string {
 }
 
 function getScopeCodes(properties: Record<string, unknown>) {
+  const provinceId = value(properties, "province_id");
   const districtId = value(properties, "district_id");
   const sectorId = value(properties, "sector_id");
   const cellId = value(properties, "cell_id");
@@ -105,7 +106,17 @@ async function main() {
     const cell = value(props, "cell");
     const sector = value(props, "sector");
     const district = value(props, "district");
-    if (!village || !cell || !sector || !district) {
+    const provinceId = value(props, "province_id");
+    const provinceEng = value(props, "province");
+    const provinceKiny: Record<string, string> = {
+      "1": "Umujyi wa Kigali",
+      "2": "Intara y'Amajyepfo",
+      "3": "Intara y'Iburengerazuba",
+      "4": "Intara y'Amajyaruguru",
+      "5": "Intara y'Iburasirazuba",
+    };
+    const province = provinceKiny[provinceId] ?? provinceEng;
+    if (!village || !cell || !sector || !district || !province || !provinceEng) {
       throw new Error(`Official feature ${id} is missing one or more place names.`);
     }
 
@@ -118,6 +129,9 @@ async function main() {
         name_kiny: village,
         name_eng: village,
         level: "village",
+        province_scope_code: codes.province,
+        province_name: province,
+        province_name_eng: provinceEng,
         district_scope_code: codes.district,
         district_name: district,
         sector_scope_code: codes.sector,
