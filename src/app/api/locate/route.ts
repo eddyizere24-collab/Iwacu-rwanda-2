@@ -8,13 +8,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createSupabaseServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
+import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { createLocateError } from "@/lib/utils/errors";
 import { maskPhone } from "@/lib/security/mask";
-import { calculateConfidenceOffline, type OfflineBoundaryCollection } from "@/lib/turf-logic";
-import { getMockLeaders, toPublicLeader } from "@/lib/mock-data";
-import fs from "fs";
-import path from "path";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
 import type { LocateResponse, LocateSuccess } from "@/types/location";
@@ -95,51 +91,6 @@ export async function POST(
       });
     }
 
-    if (!isSupabaseConfigured()) {
-      console.warn("[locate] Supabase not configured — using local GeoJSON & mock data");
-      let geojson: OfflineBoundaryCollection;
-      try {
-        const filePath = path.join(process.cwd(), "public", "offline", "gasabo-boundaries.geojson");
-        const fileContent = fs.readFileSync(filePath, "utf-8");
-        geojson = JSON.parse(fileContent) as OfflineBoundaryCollection;
-      } catch (err) {
-        console.error("Failed to read local geojson:", err);
-        return NextResponse.json(createLocateError("NETWORK_ERROR"), { status: 502 });
-      }
-
-      const offlineResult = calculateConfidenceOffline(latitude, longitude, accuracy, geojson);
-      if (offlineResult.status === "error") {
-        const fallbackVillage: ConfidenceMatch = {
-          scope_code: "RW-01-01-01-001",
-          name_kiny: "Umudugudu w'Urugero",
-          name_eng: "Sample Village",
-          level: "village",
-          confidence: 85.5,
-          intersection_area_m2: 12000,
-        };
-        const leaders = getMockLeaders().map(toPublicLeader);
-        return NextResponse.json({
-          status: "success",
-          matches: [fallbackVillage],
-          hierarchy: {
-            district: { scope_code: "RW-01", name_kiny: "Akarere ka Gasabo", name_eng: "Gasabo District", level: "district", confidence: 85.5, intersection_area_m2: 12000 },
-            sector: { scope_code: "RW-01-01", name_kiny: "Kacyiru", name_eng: "Kacyiru Sector", level: "sector", confidence: 85.5, intersection_area_m2: 12000 },
-            cell: { scope_code: "RW-01-01-01", name_kiny: "Akagari k'Urugero", name_eng: "Sample Cell", level: "cell", confidence: 85.5, intersection_area_m2: 12000 },
-            village: fallbackVillage,
-          },
-          leaders,
-          source: "gps",
-        });
-      }
-
-      const allMock = getMockLeaders().map(toPublicLeader);
-      return NextResponse.json({
-        ...offlineResult,
-        leaders: allMock,
-        source: "gps",
-      });
-    }
-
     const supabase = createSupabaseServiceClient();
 
     // --- Call PostGIS confidence function ---
@@ -153,28 +104,11 @@ export async function POST(
     );
 
     if (rpcError) {
-      console.warn("[locate] PostGIS RPC error or offline — falling back to local GeoJSON:", rpcError);
-      const fallbackVillage: ConfidenceMatch = {
-        scope_code: "RW-01-01-01-001",
-        name_kiny: "Umudugudu w'Urugero",
-        name_eng: "Sample Village",
-        level: "village",
-        confidence: 85.5,
-        intersection_area_m2: 12000,
-      };
-      const leaders = getMockLeaders().map(toPublicLeader);
-      return NextResponse.json({
-        status: "success",
-        matches: [fallbackVillage],
-        hierarchy: {
-          district: { scope_code: "RW-01", name_kiny: "Akarere ka Gasabo", name_eng: "Gasabo District", level: "district", confidence: 85.5, intersection_area_m2: 12000 },
-          sector: { scope_code: "RW-01-01", name_kiny: "Kacyiru", name_eng: "Kacyiru Sector", level: "sector", confidence: 85.5, intersection_area_m2: 12000 },
-          cell: { scope_code: "RW-01-01-01", name_kiny: "Akagari k'Urugero", name_eng: "Sample Cell", level: "cell", confidence: 85.5, intersection_area_m2: 12000 },
-          village: fallbackVillage,
-        },
-        leaders,
-        source: "gps",
-      });
+      console.error("[locate] RPC error:", rpcError);
+      return NextResponse.json(
+        createLocateError("NETWORK_ERROR", { reason: rpcError.message }),
+        { status: 502 }
+      );
     }
 
     const matches: ConfidenceMatch[] = ((rows as RpcRow[]) ?? []).map(
@@ -356,8 +290,7 @@ async function fetchLeadersMasked(
   }
 
   return data.map((row: Record<string, unknown>) => {
-    const rawB = row.boundaries;
-    const boundaries = (Array.isArray(rawB) ? rawB[0] : rawB) as {
+    const boundaries = row.boundaries as {
       name_kiny: string;
       name_eng: string | null;
       level: string;
