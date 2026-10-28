@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
+import { EmergencyBar } from "@/components/EmergencyBar";
 
 export const metadata: Metadata = {
   title: "IWACU RWANDA",
@@ -27,6 +28,8 @@ export default function RootLayout({
         <meta name="theme-color" content="#2563eb" />
       </head>
       <body className="min-h-screen bg-background text-foreground antialiased selection:bg-blue-600 selection:text-white">
+        <EmergencyBar />
+
         <header className="border-b border-border bg-card/80 backdrop-blur sticky top-0 z-40">
           <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6">
             <Link href="/" className="flex items-center gap-2.5 group">
@@ -60,12 +63,26 @@ export default function RootLayout({
         <main>{children}</main>
 
         <footer className="border-t border-border mt-16 py-8 text-center text-xs text-muted-foreground">
-          <div className="mx-auto max-w-5xl px-4 space-y-2">
+          <div className="mx-auto max-w-5xl px-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-center gap-3 text-sm font-semibold text-foreground">
+              <a href="tel:112" className="text-blue-600 hover:underline">
+                112 Polisi
+              </a>
+              <span className="text-muted-foreground">·</span>
+              <a href="tel:113" className="text-orange-600 hover:underline">
+                113 Abazimya umuriro
+              </a>
+              <span className="text-muted-foreground">·</span>
+              <a href="tel:912" className="text-red-600 hover:underline">
+                912 Ambulance
+              </a>
+            </div>
             <p>
               IWACU RWANDA · Menya ahantu uri n’abayobozi bawe mu Gasabo.
             </p>
             <p className="text-[11px] text-muted-foreground/80">
-              Amakuru n’umwirondoro byubahiriza itegeko NCSA Law No. 058/2021 rigenga uburinzi bw’amakuru bwite.
+              Amakuru n’umwirondoro byubahiriza itegeko NCSA Law No. 058/2021
+              rigenga uburinzi bw’amakuru bwite.
             </p>
           </div>
         </footer>
