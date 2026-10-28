@@ -16,6 +16,9 @@ export interface OfflineBoundaryProperties {
   name_eng: string | null;
   level: BoundaryLevel;
   path: string;
+  province_scope_code?: string;
+  province_name?: string;
+  province_name_eng?: string;
   district_scope_code?: string;
   district_name?: string;
   sector_scope_code?: string;
@@ -184,6 +187,16 @@ export function calculateConfidenceOffline(
     (feature) => feature.properties.scope_code === top.scope_code
   );
   const properties = topFeature?.properties;
+  if (properties?.province_scope_code && properties.province_name) {
+    hierarchy.province = {
+      scope_code: properties.province_scope_code,
+      name_kiny: properties.province_name,
+      name_eng: properties.province_name_eng ?? properties.province_name,
+      level: "province",
+      confidence: top.confidence,
+      intersection_area_m2: top.intersection_area_m2,
+    };
+  }
   if (properties?.district_scope_code && properties.district_name) {
     hierarchy.district = {
       scope_code: properties.district_scope_code,
