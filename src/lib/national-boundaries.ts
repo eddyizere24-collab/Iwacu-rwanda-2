@@ -9,7 +9,7 @@
 import * as turf from "@turf/turf";
 import type { Feature, MultiPolygon, Polygon } from "geojson";
 import type { ConfidenceMatch } from "@/types/boundary";
-import type { LocateError, LocateResponse, LocateSuccess } from "@/types/location";
+import type { LocateResponse, LocateSuccess } from "@/types/location";
 import { createLocateError } from "@/lib/utils/errors";
 
 const NISR_QUERY_URL =
@@ -33,6 +33,7 @@ function field(props: Record<string, unknown>, ...keys: string[]): string {
 }
 
 function scopeCodes(props: Record<string, unknown>) {
+  const provinceId = field(props, "province_id");
   const districtId = field(props, "district_id");
   const sectorId = field(props, "sector_id");
   const cellId = field(props, "cell_id");
@@ -72,14 +73,15 @@ function asMatch(
   level: ConfidenceMatch["level"],
   confidence: number,
   intersectionArea: number,
-  name: string
+  nameKiny: string,
+  nameEng: string = nameKiny
 ): ConfidenceMatch {
   return {
     scope_code: code,
-    name_kiny: name,
-    // NISR publishes these place names, not a separate Kinyarwanda translation.
-    // Keep the official toponym unchanged rather than guessing a translation.
-    name_eng: name,
+    name_kiny: nameKiny,
+    // NISR publishes these local place names, not separate translations for
+    // districts, sectors, cells and villages. Keep them unchanged.
+    name_eng: nameEng,
     level,
     confidence: Math.round(confidence * 100) / 100,
     intersection_area_m2: intersectionArea,
@@ -215,7 +217,6 @@ export async function locateFromOfficialNationalBoundaries(
 
   const matches: ConfidenceMatch[] = rawMatches.map((item) =>
     asMatch(
-      item.props,
       item.codes.village,
       "village",
       item.confidence,
@@ -231,6 +232,16 @@ export async function locateFromOfficialNationalBoundaries(
     }
   }
 
+  const provinceId = field(top.props, "province_id");
+  const provinceNameEng = field(top.props, "province");
+  const provinceNamesKiny: Record<string, string> = {
+    "1": "Umujyi wa Kigali",
+    "2": "Intara y'Amajyepfo",
+    "3": "Intara y'Iburengerazuba",
+    "4": "Intara y'Amajyaruguru",
+    "5": "Intara y'Iburasirazuba",
+  };
+  const provinceNameKiny = provinceNamesKiny[provinceId] ?? provinceNameEng;
   const districtName = field(top.props, "district");
   const sectorName = field(top.props, "sector");
   const cellName = field(top.props, "cell");
@@ -238,22 +249,32 @@ export async function locateFromOfficialNationalBoundaries(
     village: matches[0],
   };
 
+  if (provinceNameEng) {
+    hierarchy.province = asMatch(
+      top.codes.province,
+      "province",
+      matches[0].confidence,
+      top.area,
+      provinceNameKiny,
+      provinceNameEng
+    );
+  }
   if (districtName) {
     hierarchy.district = asMatch(
       top.codes.district, "district",
-      matches[0].confidence, top.area, districtName
+      matches[0].confidence, top.area, districtName, districtName
     );
   }
   if (sectorName) {
     hierarchy.sector = asMatch(
       top.codes.sector, "sector",
-      matches[0].confidence, top.area, sectorName
+      matches[0].confidence, top.area, sectorName, sectorName
     );
   }
   if (cellName) {
     hierarchy.cell = asMatch(
       top.codes.cell, "cell",
-      matches[0].confidence, top.area, cellName
+      matches[0].confidence, top.area, cellName, cellName
     );
   }
 
