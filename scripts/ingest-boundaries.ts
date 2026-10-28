@@ -64,7 +64,10 @@ type BatchFeature = {
 };
 
 function textValue(props: Record<string, unknown>, key: string): string {
-  const value = props[key] ?? props[key.toLowerCase()] ?? props[key.toUpperCase()];
+  const actualKey = Object.keys(props).find(
+    (candidate) => candidate.toLowerCase() === key.toLowerCase()
+  );
+  const value = actualKey ? props[actualKey] : undefined;
   return value === undefined || value === null ? "" : String(value).trim();
 }
 
