@@ -158,16 +158,6 @@ export default function AdminLoginPage() {
                   </>
                 )}
               </button>
-
-              <div className="pt-2 text-center border-t border-border mt-4">
-                <button
-                  type="button"
-                  onClick={() => router.push("/admin/dashboard")}
-                  className="inline-flex min-h-[44px] items-center justify-center text-xs font-semibold text-muted-foreground hover:text-foreground hover:underline"
-                >
-                  Kwinjira mu buryo bwa Demo (Gasabo Admin) →
-                </button>
-              </div>
             </form>
           )}
         </div>
