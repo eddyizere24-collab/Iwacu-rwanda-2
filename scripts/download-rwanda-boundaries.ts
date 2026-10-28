@@ -122,7 +122,7 @@ async function main() {
     const sector = value(props, "sector");
     const district = value(props, "district");
     const provinceEng = value(props, "province");
-    const provinceKey = provinceEng.toLowerCase().replace(/\\s+/g, " ").trim();
+    const provinceKey = provinceEng.toLowerCase().replace(/\s+/g, " ").trim();
     const provinceKiny: Record<string, string> = {
       "city of kigali": "Umujyi wa Kigali",
       "kigali city": "Umujyi wa Kigali",
