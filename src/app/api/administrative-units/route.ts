@@ -44,6 +44,7 @@ function parentFilter(level: string, parentCode: string): {
   parentCode: string;
 } | null {
   if (level === "district") {
+    if (!parentCode) return { where: "1=1", parentCode: "" };
     const match = /^RW-P([1-5])$/.exec(parentCode);
     if (!match) return null;
     return { where: `province_id = '${match[1]}'`, parentCode };
@@ -84,7 +85,97 @@ function codeForRecord(level: string, attrs: NISRAttributes, parentCode: string)
     village: 8,
   };
   const id = text(attrs[idField[level]]);
-  if (!new RegExp(`^\\d{${expectedLength[level]}}$`).test(id)) return null;
+  if (!new RegExp(`^\\d{${expectedLength[level]}}import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const NISR_QUERY_URL =
+  "https://gis-server.statistics.gov.rw/server/rest/services/Hosted/Village_Boundary_2022/FeatureServer/3/query";
+
+const QuerySchema = z.object({
+  level: z.enum(["province", "district", "sector", "cell", "village"]),
+  parent_code: z.string().max(100).optional(),
+});
+
+type NISRAttributes = Record<string, string | number | null | undefined>;
+type NISRFeature = { attributes?: NISRAttributes };
+type NISRResponse = {
+  features?: NISRFeature[];
+  error?: { message?: string; details?: string[] };
+};
+
+export interface AdministrativeUnitOption {
+  code: string;
+  name_kiny: string;
+  name_eng: string;
+  level: "province" | "district" | "sector" | "cell" | "village";
+  parent_code?: string;
+}
+
+const PROVINCE_KINY: Record<string, string> = {
+  "1": "Umujyi wa Kigali",
+  "2": "Intara y'Amajyepfo",
+  "3": "Intara y'Iburengerazuba",
+  "4": "Intara y'Amajyaruguru",
+  "5": "Intara y'Iburasirazuba",
+};
+
+function text(value: unknown): string {
+  return value === null || value === undefined ? "" : String(value).trim();
+}
+
+function parentFilter(level: string, parentCode: string): {
+  where: string;
+  parentCode: string;
+} | null {
+  if (level === "district") {
+    if (!parentCode) return { where: "1=1", parentCode: "" };
+    const match = /^RW-P([1-5])$/.exec(parentCode);
+    if (!match) return null;
+    return { where: `province_id = '${match[1]}'`, parentCode };
+  }
+  if (level === "sector") {
+    const match = /^(RW-P[1-5]-D(\d{2}))$/.exec(parentCode);
+    if (!match) return null;
+    return { where: `district_id = '${match[2]}'`, parentCode };
+  }
+  if (level === "cell") {
+    const match = /^(RW-P[1-5]-D\d{2}-S(\d{4}))$/.exec(parentCode);
+    if (!match) return null;
+    return { where: `sector_id = '${match[2]}'`, parentCode };
+  }
+  if (level === "village") {
+    const match = /^(RW-P[1-5]-D\d{2}-S\d{4}-C(\d{6}))$/.exec(parentCode);
+    if (!match) return null;
+    return { where: `cell_id = '${match[2]}'`, parentCode };
+  }
+  return { where: "1=1", parentCode: "" };
+}
+
+function codeForRecord(level: string, attrs: NISRAttributes, parentCode: string): string | null {
+  if (level === "province") {
+    const id = text(attrs.province_id);
+    return /^[1-5]$/.test(id) ? `RW-P${id}` : null;
+  }
+  const idField: Record<string, string> = {
+    district: "district_id",
+    sector: "sector_id",
+    cell: "cell_id",
+    village: "village_id",
+  };
+  const expectedLength: Record<string, number> = {
+    district: 2,
+    sector: 4,
+    cell: 6,
+    village: 8,
+  };
+).test(id)) return null;
+  if (level === "district" && !parentCode) {
+    const provinceId = text(attrs.province_id);
+    return /^[1-5]$/.test(provinceId) ? `RW-P${provinceId}-D${id}` : null;
+  }
   const prefix = level === "district" ? "D" : level === "sector" ? "S" : level === "cell" ? "C" : "V";
   return `${parentCode}-${prefix}${id}`;
 }
@@ -225,12 +316,17 @@ export async function GET(req: NextRequest) {
         ? PROVINCE_KINY[text(attrs.province_id)] ?? provinceName
         : name;
 
+    const unitParent =
+      level === "district" && !filter.parentCode
+        ? `RW-P${text(attrs.province_id)}`
+        : filter.parentCode;
+
     units.push({
       code,
       name_kiny: mappedKiny,
       name_eng: name,
       level,
-      parent_code: filter.parentCode,
+      parent_code: unitParent || undefined,
     });
   }
 
