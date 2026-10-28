@@ -28,7 +28,8 @@ type RawFeature = {
 type RawCollection = { type: "FeatureCollection"; features: RawFeature[] };
 
 function value(properties: Record<string, unknown>, key: string): string {
-  const raw = properties[key] ?? properties[key.toLowerCase()] ?? properties[key.toUpperCase()];
+  const actualKey = Object.keys(properties).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
+  const raw = actualKey ? properties[actualKey] : undefined;
   return raw === undefined || raw === null ? "" : String(raw).trim();
 }
 
