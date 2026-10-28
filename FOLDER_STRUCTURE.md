@@ -16,14 +16,15 @@ iwacu-rwanda/
 │   └── schema.sql                          # PostGIS + RLS + confidence RPC + ingest RPC
 │
 ├── scripts/
-│   └── ingest-boundaries.ts                # GeoJSON → PostGIS (ST_MakeValid, SRID 4326)
+│   ├── download-rwanda-boundaries.ts        # Download all available NISR 2022 village polygons
+│   └── ingest-boundaries.ts                # Batch GeoJSON → PostGIS; aggregate parent boundaries
 │
 ├── public/
 │   ├── manifest.json                       # PWA
 │   ├── sw.js                               # Service Worker (read-only offline)
 │   ├── icons/                              # (add icon-192.png, icon-512.png before prod)
 │   └── offline/
-│       └── gasabo-boundaries.geojson       # Cached for Turf.js offline confidence
+│       └── rwanda-village-boundaries.geojson # Generated national data; source coverage is documented
 │
 └── src/
     ├── app/
