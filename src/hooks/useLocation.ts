@@ -236,23 +236,9 @@ async function runOfflineConfidence(
   accuracy: number
 ): Promise<LocateResponse> {
   try {
-    let response: Response | undefined;
-    if (typeof caches !== "undefined") {
-      try {
-        const cache = await caches.open("iwacu-boundaries-v1");
-        response = await cache.match("/offline/gasabo-boundaries.geojson");
-      } catch {
-        // Cache API unavailable
-      }
-    }
+    const cache = await caches.open("iwacu-boundaries-v1");
+    const response = await cache.match("/offline/gasabo-boundaries.geojson");
     if (!response) {
-      try {
-        response = await fetch("/offline/gasabo-boundaries.geojson");
-      } catch {
-        // Fetch failed
-      }
-    }
-    if (!response || !response.ok) {
       return {
         status: "error",
         code: "OFFLINE_CACHE",
