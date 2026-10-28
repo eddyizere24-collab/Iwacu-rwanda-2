@@ -1,295 +1,325 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { GoogleGenAI } from "@google/genai";
-import { getMockLeaders, toPublicLeader } from "@/lib/mock-data";
-import {
-  RWANDA_PROVINCES,
-  RWANDA_DISTRICTS,
-  REPRESENTATIVE_SECTORS,
-  REPRESENTATIVE_CELLS,
-  REPRESENTATIVE_VILLAGES,
-} from "@/lib/rwanda-geo";
-import type { LeaderPublic } from "@/types/leader";
+import { createSupabaseServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
+import { maskPhone } from "@/lib/security/mask";
+import type { LeaderPublic, LeaderRole } from "@/types/leader";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SearchSchema = z.object({
-  query: z.string().min(1).max(500),
+  query: z.string().trim().min(1).max(500),
 });
 
-export interface AiSearchSuccessResponse {
-  status: "success";
-  answer_kiny: string;
-  matched_leaders: LeaderPublic[];
-  jurisdiction_info?: {
-    province?: string;
-    district?: string;
-    sector?: string;
-    cell?: string;
-    village?: string;
+const NISR_QUERY_URL =
+  "https://gis-server.statistics.gov.rw/server/rest/services/Hosted/Village_Boundary_2022/FeatureServer/3/query";
+
+type UnitLevel = "province" | "district" | "sector" | "cell" | "village";
+type Attrs = Record<string, string | number | null | undefined>;
+type NISRPayload = {
+  features?: Array<{ attributes?: Attrs }>;
+  error?: { message?: string; details?: string[] };
+};
+
+type OfficialUnit = {
+  code: string;
+  level: UnitLevel;
+  name_kiny: string;
+  name_eng: string;
+  province?: string;
+  district?: string;
+  sector?: string;
+  cell?: string;
+  village?: string;
+  provinceCode?: string;
+  districtCode?: string;
+  sectorCode?: string;
+  cellCode?: string;
+};
+
+function value(attrs: Attrs, key: string): string {
+  const actualKey = Object.keys(attrs).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
+  const raw = actualKey ? attrs[actualKey] : undefined;
+  return raw === null || raw === undefined ? "" : String(raw).trim();
+}
+
+function provinceKiny(name: string): string {
+  const normalized = name.toLowerCase().replace(/\s+/g, " ").trim();
+  const names: Record<string, string> = {
+    "kigali city": "Umujyi wa Kigali",
+    "city of kigali": "Umujyi wa Kigali",
+    "southern province": "Intara y'Amajyepfo",
+    "western province": "Intara y'Iburengerazuba",
+    "northern province": "Intara y'Amajyaruguru",
+    "eastern province": "Intara y'Iburasirazuba",
   };
-  suggestions: string[];
+  return names[normalized] ?? name;
+}
+
+function codes(attrs: Attrs) {
+  const provinceId = value(attrs, "province_id");
+  const districtId = value(attrs, "district_id");
+  const sectorId = value(attrs, "sector_id");
+  const cellId = value(attrs, "cell_id");
+  const villageId = value(attrs, "village_id");
+  if (![provinceId, districtId].every((id) => /^\d+$/.test(id))) return null;
+  const province = `RW-P${provinceId}`;
+  const district = `${province}-D${districtId}`;
+  const sector = sectorId ? `${district}-S${sectorId}` : undefined;
+  const cell = sector && cellId ? `${sector}-C${cellId}` : undefined;
+  const village = cell && villageId ? `${cell}-V${villageId}` : undefined;
+  return { province, district, sector, cell, village };
+}
+
+function searchTokens(query: string): string[] {
+  const stopWords = new Set([
+    "ninde", "nde", "ni", "muri", "kuri", "ku", "mu", "wa", "wo", "w", "ya", "ye",
+    "ba", "aba", "iki", "ikiya", "iki", "uyu", "uyu", "bande", "ese", "ingahe",
+    "umuyobozi", "abayobozi", "nkeneye", "amakuru", "telefone", "nomero", "wange",
+    "wacu", "yacu", "yabo", "yawo", "nshaka", "menya", "mbwira", "ndifuza",
+    "akarere", "umurenge", "akagari", "umudugudu", "meya", "gitifu", "uyobora",
+    "uyoboye", "amakarita", "aho", "ndi", "ari", "ko", "reka", "kuvuga"
+  ]);
+  const normalized = query
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9' -]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const tokens = normalized.split(" ").filter((token) =>
+    token.length >= 3 && !stopWords.has(token) && !/^\d+$/.test(token)
+  );
+  return [...new Set(tokens.reverse())].slice(0, 3);
+}
+
+function preferredLevels(query: string): UnitLevel[] {
+  const q = query.toLowerCase();
+  if (q.includes("umudugudu") || q.includes("village")) return ["village", "cell", "sector", "district", "province"];
+  if (q.includes("akagari") || q.includes("cell")) return ["cell", "village", "sector", "district", "province"];
+  if (q.includes("umurenge") || q.includes("sector")) return ["sector", "cell", "village", "district", "province"];
+  if (q.includes("akarere") || q.includes("district") || q.includes("meya")) return ["district", "sector", "cell", "village", "province"];
+  if (q.includes("intara") || q.includes("province")) return ["province", "district", "sector", "cell", "village"];
+  return ["village", "cell", "sector", "district", "province"];
+}
+
+function queryForLevel(level: UnitLevel, token: string): { where: string; fields: string } {
+  const safe = token.replace(/'/g, "''");
+  const like = `UPPER(${level}) LIKE UPPER('%${safe}%')`;
+  const fields: Record<UnitLevel, string> = {
+    province: "province_id,province",
+    district: "province_id,province,district_id,district",
+    sector: "province_id,province,district_id,district,sector_id,sector",
+    cell: "province_id,province,district_id,district,sector_id,sector,cell_id,cell",
+    village: "province_id,province,district_id,district,sector_id,sector,cell_id,cell,village_id,village",
+  };
+  return { where: like, fields: fields[level] };
+}
+
+async function findOfficialUnit(query: string): Promise<OfficialUnit | null> {
+  const tokens = searchTokens(query);
+  const levels = preferredLevels(query);
+  if (!tokens.length) return null;
+
+  for (const token of tokens) {
+    for (const level of levels) {
+      const q = queryForLevel(level, token);
+      const params = new URLSearchParams({
+        f: "json",
+        where: q.where,
+        outFields: q.fields,
+        returnGeometry: "false",
+        returnDistinctValues: "true",
+        orderByFields: level === "province" ? "province_id ASC" :
+          level === "district" ? "district_id ASC" :
+          level === "sector" ? "sector_id ASC" :
+          level === "cell" ? "cell_id ASC" : "village_id ASC",
+        resultRecordCount: "10",
+      });
+
+      let response: Response;
+      try {
+        response = await fetch(NISR_QUERY_URL, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: params.toString(),
+          cache: "no-store",
+          signal: AbortSignal.timeout(7_000),
+        });
+      } catch {
+        return null;
+      }
+      if (!response.ok) return null;
+
+      let payload: NISRPayload;
+      try {
+        payload = (await response.json()) as NISRPayload;
+      } catch {
+        return null;
+      }
+      if (payload.error || !Array.isArray(payload.features) || payload.features.length === 0) continue;
+
+      const attrs = payload.features[0]?.attributes;
+      if (!attrs) continue;
+      const adminCodes = codes(attrs);
+      if (!adminCodes) continue;
+      const nameField = level === "province" ? "province" :
+        level === "district" ? "district" :
+        level === "sector" ? "sector" :
+        level === "cell" ? "cell" : "village";
+      const name = value(attrs, nameField);
+      if (!name) continue;
+
+      const names = {
+        province: provinceKiny(value(attrs, "province")),
+        district: value(attrs, "district"),
+        sector: value(attrs, "sector"),
+        cell: value(attrs, "cell"),
+        village: value(attrs, "village"),
+      };
+      const code = adminCodes[level];
+      if (!code) continue;
+
+      return {
+        code,
+        level,
+        name_kiny: level === "province" ? provinceKiny(name) : name,
+        name_eng: name,
+        province: names.province,
+        district: names.district,
+        sector: names.sector,
+        cell: names.cell,
+        village: names.village,
+        provinceCode: adminCodes.province,
+        districtCode: adminCodes.district,
+        sectorCode: adminCodes.sector,
+        cellCode: adminCodes.cell,
+      };
+    }
+  }
+  return null;
+}
+
+async function fetchLeadersForUnit(unit: OfficialUnit): Promise<LeaderPublic[]> {
+  if (!isSupabaseConfigured()) return [];
+  const supabase = createSupabaseServiceClient();
+  const scopeCodes = [
+    unit.code,
+    unit.cellCode,
+    unit.sectorCode,
+    unit.districtCode,
+    unit.provinceCode,
+  ].filter((code): code is string => Boolean(code));
+
+  const { data, error } = await supabase
+    .from("leaders")
+    .select(`
+      id, scope_code, first_name, last_name, role, email, photo_url,
+      phone_number, valid_from, valid_to, version,
+      boundaries!inner ( name_kiny, name_eng, level )
+    `)
+    .in("scope_code", scopeCodes)
+    .is("valid_to", null);
+
+  if (error || !data) return [];
+
+  return data.map((row: Record<string, unknown>) => {
+    const rawBoundary = row.boundaries;
+    const boundary = (Array.isArray(rawBoundary) ? rawBoundary[0] : rawBoundary) as
+      { name_kiny?: string; name_eng?: string | null; level?: string } | null;
+    const phone = row.phone_number ? String(row.phone_number) : null;
+    return {
+      id: String(row.id),
+      scope_code: String(row.scope_code),
+      first_name: String(row.first_name),
+      last_name: String(row.last_name),
+      role: row.role as LeaderRole,
+      email: row.email ? String(row.email) : null,
+      photo_url: row.photo_url ? String(row.photo_url) : null,
+      valid_from: String(row.valid_from),
+      valid_to: row.valid_to ? String(row.valid_to) : null,
+      version: Number(row.version ?? 1),
+      boundary_name_kiny: boundary?.name_kiny ?? "",
+      boundary_name_eng: boundary?.name_eng ?? null,
+      level: boundary?.level ?? "",
+      phone_masked: maskPhone(phone),
+      phone_raw: undefined,
+    } as LeaderPublic;
+  });
+}
+
+function answerForUnit(unit: OfficialUnit, leaders: LeaderPublic[]) {
+  const hierarchy = [
+    unit.province && `Intara/Umujyi: ${unit.province}`,
+    unit.district && `Akarere: ${unit.district}`,
+    unit.sector && `Umurenge: ${unit.sector}`,
+    unit.cell && `Akagari: ${unit.cell}`,
+    unit.village && `Umudugudu: ${unit.village}`,
+  ].filter(Boolean);
+
+  if (leaders.length) {
+    const names = leaders.slice(0, 5).map((leader) =>
+      `${leader.first_name} ${leader.last_name} (${leader.role}) — ${leader.boundary_name_kiny}`
+    );
+    return `Twabonye amakuru y'ahantu washakaga. ${hierarchy.join("; ")}. Abayobozi bari muri sisitemu: ${names.join("; ")}.`;
+  }
+  return `Twabonye aho ushaka muri dosiye y'imbibi za NISR: ${hierarchy.join("; ")}. Ariko nta makuru y'umuyobozi yemejwe yabonetse muri sisitemu kuri ubu, bityo ntituzatanga amazina cyangwa nimero zitagenzuwe.`;
 }
 
 export async function POST(req: NextRequest) {
+  let query = "";
   try {
-    const body = await req.json();
-    const parsed = SearchSchema.safeParse(body);
+    const parsed = SearchSchema.safeParse(await req.json());
     if (!parsed.success) {
-      return NextResponse.json(
-        { status: "error", message_kiny: "Andika ikibazo cyangwa agace ushaka kumenya." },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        status: "error",
+        message_kiny: "Andika izina ry'ahantu cyangwa ikibazo ushaka kubaza.",
+      }, { status: 400 });
+    }
+    query = parsed.data.query;
+
+    const unit = await findOfficialUnit(query);
+    if (unit) {
+      const leaders = await fetchLeadersForUnit(unit);
+      const suggestions = unit.level === "province"
+        ? [`Uturere tugize ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
+        : unit.level === "district"
+          ? [`Imirenge igize Akarere ka ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
+          : unit.level === "sector"
+            ? [`Utugari tugize Umurenge wa ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
+            : unit.level === "cell"
+              ? [`Imidugudu iri muri ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
+              : [`Akagari ${unit.cell} ibarizwamo`, `Umurenge wa ${unit.sector}`, "Menya aho ndi ukoresheje GPS"];
+
+      return NextResponse.json({
+        status: "success",
+        answer_kiny: answerForUnit(unit, leaders),
+        matched_leaders: leaders,
+        jurisdiction_info: {
+          province: unit.province,
+          district: unit.district,
+          sector: unit.sector,
+          cell: unit.cell,
+          village: unit.village,
+        },
+        suggestions,
+        source: "NISR Village Boundary 2022",
+      });
     }
 
-    const { query } = parsed.data;
-    const lower = query.toLowerCase();
-
-    // Gather available leaders knowledge for AI context
-    const allLeaders = getMockLeaders().map((l) => toPublicLeader(l, false));
-
-    // Try Gemini 3.8 Flash if GEMINI_API_KEY is available
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-        const systemPrompt = `
-You are the official civic AI assistant for IWACU RWANDA (Inzego z'Ibanze).
-Your job is to answer citizen questions about Rwandan local governance in natural, warm, and highly respectful Kinyarwanda.
-You have access to current leaders and administrative divisions in Rwanda:
-
-KNOWN LEADERS IN SYSTEM:
-${JSON.stringify(
-  allLeaders.map((l) => ({
-    id: l.id,
-    name: `${l.first_name} ${l.last_name}`,
-    role: l.role,
-    boundary: l.boundary_name_kiny,
-    level: l.level,
-    scope_code: l.scope_code,
-    phone_masked: l.phone_masked,
-    vision: l.vision_priorities,
-    office_hours: l.office_hours,
-  })),
-  null,
-  2
-)}
-
-ADMINISTRATIVE CONTEXT OF RWANDA:
-- 5 Provinces (Umujyi wa Kigali, Amajyepfo, Iburengerazuba, Amajyaruguru, Iburasirazuba)
-- 30 Districts (Gasabo, Kicukiro, Nyarugenge, Musanze, Huye, Rubavu, Rwamagana, etc.)
-- 416 Sectors (Imirenge: Kacyiru, Kimironko, Remera, Gisozi, Niboye, etc.)
-- 2,148 Cells (Utugari: Kamatamu, Kibagabaga, Kibaza, Nyabisindu, etc.)
-- 14,837 Villages (Imidugudu: Ubumwe, Amahoro, Karongi, Gisiza, etc.)
-
-TASK:
-1. Understand the user's question or search query in Kinyarwanda.
-2. If the user searches an Umudugudu, Akagari, Umurenge, Akarere, or a specific leader's name:
-   - Identify which leader(s) correspond to this search. Return their leader IDs in "matched_leader_ids".
-   - Provide a natural, concise, polite answer in Kinyarwanda in "answer_kiny" explaining who leads this area, their role, and their office hours.
-3. If the user asks a general question (e.g. "Muri Kacyiru harimo imidugudu ingahe?", "Ninde meya wa Gasabo?"):
-   - Provide a factual, helpful answer in Kinyarwanda in "answer_kiny".
-   - Return relevant leader IDs in "matched_leader_ids" if applicable.
-4. Output strictly a JSON object with:
-   - "answer_kiny": string
-   - "matched_leader_ids": string[]
-   - "suggestions": string[] (3 short related question suggestions in Kinyarwanda)
-   - "jurisdiction_info": { "province"?: string, "district"?: string, "sector"?: string, "cell"?: string, "village"?: string }
-`;
-
-        const response = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents: [
-            {
-              role: "user",
-              parts: [{ text: `${systemPrompt}\n\nUSER QUESTION / QUERY: "${query}"` }],
-            },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            temperature: 0.2,
-          },
-        });
-
-        const textOutput = response.text;
-        if (textOutput) {
-          const aiJson = JSON.parse(textOutput);
-          const matchedIds: string[] = aiJson.matched_leader_ids || [];
-          const matchedLeaders = allLeaders.filter((l) => matchedIds.includes(l.id));
-
-          return NextResponse.json({
-            status: "success",
-            answer_kiny: aiJson.answer_kiny || `Dore amakuru y'abayobozi ajyanye na «${query}»:`,
-            matched_leaders: matchedLeaders.length > 0 ? matchedLeaders : findFallbackLeaders(lower, allLeaders),
-            jurisdiction_info: aiJson.jurisdiction_info,
-            suggestions: aiJson.suggestions || [
-              "Ninde uyobora umurenge wa Kacyiru?",
-              "Nkeneye kumenya Meya wa Gasabo",
-              "Abayobozi b'akagari ka Kamatamu ni ba nde?",
-            ],
-          });
-        }
-      } catch (geminiError) {
-        console.warn("[ai-router] Gemini API call skipped or errored, falling back:", geminiError);
-      }
-    }
-
-    // High-performance intelligent heuristic fallback in pure Kinyarwanda
-    const { answerKiny, matchedLeaders, jurisdictionInfo, suggestions } = intelligentKinyarwandaSearch(
-      lower,
-      allLeaders
-    );
-
+    // No official boundary name was matched. Avoid inventing leaders or places.
     return NextResponse.json({
       status: "success",
-      answer_kiny: answerKiny,
-      matched_leaders: matchedLeaders,
-      jurisdiction_info: jurisdictionInfo,
-      suggestions,
+      answer_kiny: "Ntabwo twabonye izina ry'ahantu rihuye n'ibyo wanditse muri dosiye y'imbibi za NISR. Gerageza izina ry'umudugudu, akagari, umurenge, akarere cyangwa intara uko ryanditswe.",
+      matched_leaders: [],
+      suggestions: ["Menya aho ndi ukoresheje GPS", "Shakisha Akarere ka Gasabo", "Shakisha Umujyi wa Kigali"],
     });
-  } catch (err) {
-    console.error("[ai-router] error:", err);
-    return NextResponse.json(
-      {
-        status: "error",
-        message_kiny: "Ikibazo cy'urukurikirane mu gushakisha. Ongera ugerageze.",
-      },
-      { status: 500 }
-    );
+  } catch (error) {
+    console.error("[ai-router] error:", error);
+    return NextResponse.json({
+      status: "error",
+      message_kiny: "Serivisi y'amakarita ntiyabonetse. Ongera ugerageze nyuma.",
+    }, { status: 502 });
   }
-}
-
-/**
- * Intelligent Kinyarwanda linguistic pattern matcher
- */
-function intelligentKinyarwandaSearch(
-  q: string,
-  leaders: LeaderPublic[]
-): {
-  answerKiny: string;
-  matchedLeaders: LeaderPublic[];
-  jurisdictionInfo?: Record<string, string>;
-  suggestions: string[];
-} {
-  // 1. Leader by Name Matching
-  const byName = leaders.filter(
-    (l) =>
-      q.includes(l.first_name.toLowerCase()) ||
-      q.includes(l.last_name.toLowerCase()) ||
-      `${l.first_name} ${l.last_name}`.toLowerCase().includes(q)
-  );
-
-  if (byName.length > 0) {
-    const leader = byName[0];
-    return {
-      answerKiny: `Twabonye umuyobozi: ${leader.first_name} ${leader.last_name}, akaba ari ${leader.role} muri ${leader.boundary_name_kiny}. Amasaha ye yo kuboneka ni ${leader.office_hours || "08:00 – 17:00"}.`,
-      matchedLeaders: byName,
-      suggestions: [
-        `Nkeneye nomero ya ${leader.first_name} ${leader.last_name}`,
-        `Abayobozi b'umurenge wa ${leader.boundary_name_kiny}`,
-        `Intego z'umuyobozi ${leader.first_name}`,
-      ],
-    };
-  }
-
-  // 2. Specific Sector / Umurenge query
-  const matchedSector = REPRESENTATIVE_SECTORS.find(
-    (s) => q.includes(s.name_kiny.toLowerCase()) || q.includes(s.name_eng.toLowerCase())
-  );
-  if (matchedSector) {
-    const sectorLeaders = leaders.filter((l) =>
-      l.boundary_name_kiny.toLowerCase().includes(matchedSector.name_kiny.toLowerCase())
-    );
-    const gitifu = sectorLeaders.find((l) => l.role === "Sector Executive Secretary") || sectorLeaders[0];
-    const answer = gitifu
-      ? `Umurenge wa ${matchedSector.name_kiny} uyoborwa na ${gitifu.first_name} ${gitifu.last_name} (${gitifu.role}). Wagera kuri serivisi ze ukoresheje telefone cyangwa WhatsApp hano hasi.`
-      : `Twakiriye ikibazo cyawe ku Murenge wa ${matchedSector.name_kiny}. Dore abayobozi babonetse muri ako gace:`;
-
-    return {
-      answerKiny: answer,
-      matchedLeaders: sectorLeaders.length > 0 ? sectorLeaders : leaders.slice(0, 2),
-      jurisdictionInfo: { sector: matchedSector.name_kiny, district: "Gasabo" },
-      suggestions: [
-        `Utugari tugize Umurenge wa ${matchedSector.name_kiny}`,
-        `Umukuru w'umudugudu muri ${matchedSector.name_kiny}`,
-        `Meya w'Akarere ka Gasabo`,
-      ],
-    };
-  }
-
-  // 3. Cell / Akagari query
-  const matchedCell = REPRESENTATIVE_CELLS.find(
-    (c) => q.includes(c.name_kiny.toLowerCase()) || q.includes(c.name_eng.toLowerCase())
-  );
-  if (matchedCell) {
-    const cellLeaders = leaders.filter((l) =>
-      l.boundary_name_kiny.toLowerCase().includes(matchedCell.name_kiny.toLowerCase())
-    );
-    return {
-      answerKiny: `Muri ${matchedCell.name_kiny}, twabonye abayobozi bahari barimo ab'akagari n'ab'imidugudu ihabarizwa.`,
-      matchedLeaders: cellLeaders.length > 0 ? cellLeaders : leaders.slice(0, 2),
-      jurisdictionInfo: { cell: matchedCell.name_kiny },
-      suggestions: [
-        `Imidugudu iri muri ${matchedCell.name_kiny}`,
-        `Gitifu w'Umurenge wa Kacyiru`,
-      ],
-    };
-  }
-
-  // 4. Village / Umudugudu query
-  const matchedVillage = REPRESENTATIVE_VILLAGES.find(
-    (v) => q.includes(v.name_kiny.toLowerCase()) || q.includes(v.name_eng.toLowerCase())
-  );
-  if (matchedVillage) {
-    const villageLeaders = leaders.filter((l) =>
-      l.boundary_name_kiny.toLowerCase().includes(matchedVillage.name_kiny.toLowerCase())
-    );
-    return {
-      answerKiny: `${matchedVillage.name_kiny}: Dore umukuru w'umudugudu wemejwe muri aka gace n'amakuru yo kumugeraho.`,
-      matchedLeaders: villageLeaders.length > 0 ? villageLeaders : leaders.slice(0, 1),
-      jurisdictionInfo: { village: matchedVillage.name_kiny },
-      suggestions: [
-        `Gitifu w'Akagari k'uyu mudugudu`,
-        `Amakuru y'umutekano n'isuku muri uyu mudugudu`,
-      ],
-    };
-  }
-
-  // 5. Mayor or District query
-  if (q.includes("meya") || q.includes("mayor") || q.includes("akarere")) {
-    const mayor = leaders.find((l) => l.role === "Mayor") || leaders[0];
-    return {
-      answerKiny: `Umuyobozi w'Akarere ka Gasabo (Meya) ni ${mayor.first_name} ${mayor.last_name}. Ibiro by'akarere bifungura guhera saa mbiri za mugitondo (08:00 – 17:00).`,
-      matchedLeaders: [mayor],
-      jurisdictionInfo: { district: "Gasabo" },
-      suggestions: [
-        "Visi Meya wungirije muri Gasabo ni nde?",
-        "Imirenge igize Akarere ka Gasabo",
-        "Uburyo bwo guhura n'ubuyobozi bw'Akarere",
-      ],
-    };
-  }
-
-  // General fallback
-  const fallbackMatched = findFallbackLeaders(q, leaders);
-  return {
-    answerKiny: `Twashakishije muri sisitemu y'ubuyobozi bw'u Rwanda ku bibazo byawe: «${q}». Dore amakuru y'abayobozi ahuye n'ibyo mwabajije:`,
-    matchedLeaders: fallbackMatched.length > 0 ? fallbackMatched : leaders.slice(0, 2),
-    suggestions: [
-      "Ninde uyobora umurenge wa Kacyiru?",
-      "Ninde uyobora akagari ka Kamatamu?",
-      "Umukuru w'umudugudu w'ubumwe",
-    ],
-  };
-}
-
-function findFallbackLeaders(q: string, leaders: LeaderPublic[]): LeaderPublic[] {
-  return leaders.filter(
-    (l) =>
-      q.includes(l.first_name.toLowerCase()) ||
-      q.includes(l.last_name.toLowerCase()) ||
-      q.includes(l.role.toLowerCase()) ||
-      q.includes(l.boundary_name_kiny.toLowerCase())
-  );
 }
