@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -16,12 +16,7 @@ import {
   Lock,
 } from "lucide-react";
 import { RwandanSun } from "@/components/RwandanSun";
-import {
-  RWANDA_PROVINCES,
-  getDistrictsByProvince,
-  getSectorsByDistrict,
-  getCellsBySector,
-} from "@/lib/rwanda-geo";
+import type { AdministrativeUnit } from "@/lib/rwanda-geo";
 
 export type AdminTier = "national" | "province" | "district" | "sector" | "cell";
 
@@ -78,49 +73,153 @@ export default function AdminLoginPage() {
   const [step, setStep] = useState<1 | 2>(1);
   const [selectedTier, setSelectedTier] = useState<AdminTier>("district");
 
-  // Cascading selections
-  const [selectedProvince, setSelectedProvince] = useState("RW-01"); // Kigali
-  const availableDistricts = useMemo(() => getDistrictsByProvince(selectedProvince), [selectedProvince]);
-  
-  const [selectedDistrict, setSelectedDistrict] = useState("RW-01-01"); // Gasabo
-  const availableSectors = useMemo(() => getSectorsByDistrict(selectedDistrict), [selectedDistrict]);
+  // Administrative selectors are populated from NISR's national boundary service.
+  // No Gasabo-only or fabricated sector/cell/village options are used here.
+  const [provinces, setProvinces] = useState<AdministrativeUnit[]>([]);
+  const [availableDistricts, setAvailableDistricts] = useState<AdministrativeUnit[]>([]);
+  const [availableSectors, setAvailableSectors] = useState<AdministrativeUnit[]>([]);
+  const [availableCells, setAvailableCells] = useState<AdministrativeUnit[]>([]);
+  const [unitsLoading, setUnitsLoading] = useState(true);
+  const [unitsError, setUnitsError] = useState<string | null>(null);
 
-  const [selectedSector, setSelectedSector] = useState("RW-01-01-01"); // Kacyiru
-  const availableCells = useMemo(() => getCellsBySector(selectedSector), [selectedSector]);
+  const [selectedProvince, setSelectedProvince] = useState("");
+  const [selectedDistrict, setSelectedDistrict] = useState("");
+  const [selectedSector, setSelectedSector] = useState("");
+  const [selectedCell, setSelectedCell] = useState("");
 
-  const [selectedCell, setSelectedCell] = useState("RW-01-01-01-01"); // Kamatamu
+  async function fetchAdministrativeUnits(
+    level: "province" | "district" | "sector" | "cell",
+    parentCode?: string
+  ): Promise<AdministrativeUnit[]> {
+    const params = new URLSearchParams({ level });
+    if (parentCode) params.set("parent_code", parentCode);
+    const response = await fetch(`/api/administrative-units?${params.toString()}`, {
+      cache: "no-store",
+    });
+    const payload = (await response.json()) as {
+      status?: string;
+      units?: AdministrativeUnit[];
+      message_kiny?: string;
+    };
+    if (!response.ok || payload.status !== "success" || !Array.isArray(payload.units)) {
+      throw new Error(payload.message_kiny || "Amakuru y'inzego z'ubuyobozi ntiyabonetse.");
+    }
+    return payload.units;
+  }
 
-  // Handle province change -> cascade down
+  useEffect(() => {
+    let active = true;
+    setUnitsLoading(true);
+    fetchAdministrativeUnits("province")
+      .then((units) => {
+        if (!active) return;
+        setProvinces(units);
+        setSelectedProvince((current) =>
+          units.some((unit) => unit.code === current) ? current : units[0]?.code ?? ""
+        );
+      })
+      .catch((error: unknown) => {
+        if (active) setUnitsError(error instanceof Error ? error.message : "Ntibyashobotse kubona amakuru y'inzego.");
+      })
+      .finally(() => {
+        if (active) setUnitsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedProvince) {
+      setAvailableDistricts([]);
+      setSelectedDistrict("");
+      return () => { active = false; };
+    }
+    setAvailableDistricts([]);
+    setSelectedDistrict("");
+    setAvailableSectors([]);
+    setSelectedSector("");
+    setAvailableCells([]);
+    setSelectedCell("");
+
+    fetchAdministrativeUnits("district", selectedProvince)
+      .then((units) => {
+        if (!active) return;
+        setAvailableDistricts(units);
+        setSelectedDistrict(units[0]?.code ?? "");
+      })
+      .catch((error: unknown) => {
+        if (active) setUnitsError(error instanceof Error ? error.message : "Ntibyashobotse kubona uturere.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedProvince]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedDistrict) {
+      setAvailableSectors([]);
+      setSelectedSector("");
+      return () => { active = false; };
+    }
+    setAvailableSectors([]);
+    setSelectedSector("");
+    setAvailableCells([]);
+    setSelectedCell("");
+
+    fetchAdministrativeUnits("sector", selectedDistrict)
+      .then((units) => {
+        if (!active) return;
+        setAvailableSectors(units);
+        setSelectedSector(units[0]?.code ?? "");
+      })
+      .catch((error: unknown) => {
+        if (active) setUnitsError(error instanceof Error ? error.message : "Ntibyashobotse kubona imirenge.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedDistrict]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedSector) {
+      setAvailableCells([]);
+      setSelectedCell("");
+      return () => { active = false; };
+    }
+    setAvailableCells([]);
+    setSelectedCell("");
+
+    fetchAdministrativeUnits("cell", selectedSector)
+      .then((units) => {
+        if (!active) return;
+        setAvailableCells(units);
+        setSelectedCell(units[0]?.code ?? "");
+      })
+      .catch((error: unknown) => {
+        if (active) setUnitsError(error instanceof Error ? error.message : "Ntibyashobotse kubona utugari.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedSector]);
+
   function handleProvinceChange(code: string) {
+    setUnitsError(null);
     setSelectedProvince(code);
-    const dists = getDistrictsByProvince(code);
-    if (dists.length > 0) {
-      setSelectedDistrict(dists[0].code);
-      const secs = getSectorsByDistrict(dists[0].code);
-      if (secs.length > 0) {
-        setSelectedSector(secs[0].code);
-        const cls = getCellsBySector(secs[0].code);
-        if (cls.length > 0) setSelectedCell(cls[0].code);
-      }
-    }
   }
 
-  // Handle district change -> cascade down
   function handleDistrictChange(code: string) {
+    setUnitsError(null);
     setSelectedDistrict(code);
-    const secs = getSectorsByDistrict(code);
-    if (secs.length > 0) {
-      setSelectedSector(secs[0].code);
-      const cls = getCellsBySector(secs[0].code);
-      if (cls.length > 0) setSelectedCell(cls[0].code);
-    }
   }
 
-  // Handle sector change -> cascade down
   function handleSectorChange(code: string) {
+    setUnitsError(null);
     setSelectedSector(code);
-    const cls = getCellsBySector(code);
-    if (cls.length > 0) setSelectedCell(cls[0].code);
   }
 
   // Credentials
@@ -134,28 +233,30 @@ export default function AdminLoginPage() {
       case "national":
         return { code: "RW", name: "U Rwanda Rwose (MINALOC)" };
       case "province": {
-        const p = RWANDA_PROVINCES.find((x) => x.code === selectedProvince);
-        return { code: p?.code || "RW-01", name: p?.name_kiny || "Umujyi wa Kigali" };
+        const p = provinces.find((x) => x.code === selectedProvince);
+        return p
+          ? { code: p.code, name: p.name_kiny }
+          : { code: "", name: "Hitamo intara cyangwa Umujyi wa Kigali" };
       }
       case "district": {
         const d = availableDistricts.find((x) => x.code === selectedDistrict);
-        return { code: d?.code || "RW-01-01", name: `Akarere ka ${d?.name_kiny || "Gasabo"}` };
+        return d
+          ? { code: d.code, name: `Akarere ka ${d.name_kiny}` }
+          : { code: "", name: "Hitamo akarere" };
       }
       case "sector": {
         const s = availableSectors.find((x) => x.code === selectedSector);
         const d = availableDistricts.find((x) => x.code === selectedDistrict);
-        return {
-          code: s?.code || "RW-01-01-01",
-          name: `Umurenge wa ${s?.name_kiny || "Kacyiru"} (${d?.name_kiny || "Gasabo"})`,
-        };
+        return s
+          ? { code: s.code, name: `Umurenge wa ${s.name_kiny}${d ? ` (${d.name_kiny})` : ""}` }
+          : { code: "", name: "Hitamo umurenge" };
       }
       case "cell": {
-        const c = availableCells.find((x) => x.code === selectedCell);
-        const s = availableSectors.find((x) => x.code === selectedSector);
-        return {
-          code: c?.code || `${selectedSector}-01`,
-          name: `Akagari ka ${c?.name_kiny || "Kamatamu"} (${s?.name_kiny || "Kacyiru"})`,
-        };
+        const cell = availableCells.find((x) => x.code === selectedCell);
+        const sector = availableSectors.find((x) => x.code === selectedSector);
+        return cell
+          ? { code: cell.code, name: `Akagari ka ${cell.name_kiny}${sector ? ` (${sector.name_kiny})` : ""}` }
+          : { code: "", name: "Hitamo akagari" };
       }
     }
   }
@@ -163,6 +264,11 @@ export default function AdminLoginPage() {
   function handleProceedToCredentials(e: React.FormEvent) {
     e.preventDefault();
     setErrorMsg(null);
+    const scope = getScopeDetails();
+    if (unitsLoading || unitsError || (selectedTier !== "national" && !scope.code)) {
+      setErrorMsg(unitsError || "Hitamo neza urwego n'aho ruherereye mbere yo gukomeza.");
+      return;
+    }
     setStep(2);
   }
 
@@ -278,6 +384,16 @@ export default function AdminLoginPage() {
                   <p className="text-xs font-bold text-foreground">
                     2. Hitamo aho ubarizwa (Urutonde rw&apos;uruhererekane):
                   </p>
+                  {unitsLoading && (
+                    <p role="status" className="text-xs text-muted-foreground">
+                      Turimo kuzana urutonde rw&apos;inzego zose z&apos;u Rwanda...
+                    </p>
+                  )}
+                  {unitsError && (
+                    <p role="alert" className="text-xs text-red-600">
+                      {unitsError}
+                    </p>
+                  )}
 
                   {/* Province Selector (Needed for province, district, sector, cell) */}
                   <div>
@@ -287,10 +403,11 @@ export default function AdminLoginPage() {
                     <select
                       id="prov-sel"
                       value={selectedProvince}
+                      disabled={unitsLoading || provinces.length === 0}
                       onChange={(e) => handleProvinceChange(e.target.value)}
                       className="w-full min-h-[44px] rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A3E0]"
                     >
-                      {RWANDA_PROVINCES.map((p) => (
+                      {provinces.map((p) => (
                         <option key={p.code} value={p.code}>
                           {p.name_kiny} ({p.name_eng})
                         </option>
@@ -307,6 +424,7 @@ export default function AdminLoginPage() {
                       <select
                         id="dist-sel"
                         value={selectedDistrict}
+                        disabled={unitsLoading || availableDistricts.length === 0}
                         onChange={(e) => handleDistrictChange(e.target.value)}
                         className="w-full min-h-[44px] rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A3E0]"
                       >
@@ -328,6 +446,7 @@ export default function AdminLoginPage() {
                       <select
                         id="sec-sel"
                         value={selectedSector}
+                        disabled={unitsLoading || availableSectors.length === 0}
                         onChange={(e) => handleSectorChange(e.target.value)}
                         className="w-full min-h-[44px] rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A3E0]"
                       >
@@ -349,6 +468,7 @@ export default function AdminLoginPage() {
                       <select
                         id="cell-sel"
                         value={selectedCell}
+                        disabled={unitsLoading || availableCells.length === 0}
                         onChange={(e) => setSelectedCell(e.target.value)}
                         className="w-full min-h-[44px] rounded-xl border border-input bg-background px-3 py-2 text-xs font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A3E0]"
                       >
@@ -373,7 +493,8 @@ export default function AdminLoginPage() {
 
               <button
                 type="submit"
-                className="w-full min-h-[48px] rounded-xl bg-[#00A3E0] px-5 py-3 text-xs font-bold text-white shadow-md hover:bg-[#0090c6] active:scale-95 transition-all flex items-center justify-center gap-2"
+                disabled={unitsLoading || Boolean(unitsError) || (selectedTier !== "national" && !scopeInfo.code)}
+                className="w-full min-h-[48px] rounded-xl bg-[#00A3E0] px-5 py-3 text-xs font-bold text-white shadow-md hover:bg-[#0090c6] active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span>Komeza ku mwirondoro w&apos;umuyobozi</span>
                 <ChevronRight className="h-4 w-4" />
