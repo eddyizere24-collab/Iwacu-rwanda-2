@@ -480,7 +480,7 @@ RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
-AS $
+AS $$
 DECLARE
   v_village_count INTEGER := 0;
 BEGIN
@@ -488,7 +488,7 @@ BEGIN
     RAISE EXCEPTION 'p_features must be a JSON array';
   END IF;
 
-  -- Upsert the official village geometries.
+  -- Upsert the village polygons after validating/fixing geometry.
   WITH parsed AS (
     SELECT *
     FROM jsonb_to_recordset(p_features) AS x(
@@ -498,6 +498,9 @@ BEGIN
       name_eng TEXT,
       level TEXT,
       geom JSONB,
+      province_scope_code TEXT,
+      province_name TEXT,
+      province_name_eng TEXT,
       district_scope_code TEXT,
       district_name TEXT,
       sector_scope_code TEXT,
@@ -507,16 +510,10 @@ BEGIN
     )
   ),
   normalized AS (
-    SELECT
-      p.*,
-      ST_Multi(
-        ST_CollectionExtract(
-          ST_MakeValid(
-            ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)
-          ),
-          3
-        )
-      ) AS polygon_geom
+    SELECT p.*,
+      ST_Multi(ST_CollectionExtract(
+        ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3
+      )) AS polygon_geom
     FROM parsed p
     WHERE p.geom IS NOT NULL
   )
@@ -539,92 +536,103 @@ BEGIN
 
   GET DIAGNOSTICS v_village_count = ROW_COUNT;
 
-  -- District polygons: merge each batch with the prior batches' geometry.
+  -- Build dissolved parent polygons from the same village features. When a
+  -- parent appears in a later batch, union the new batch with its stored shape.
   WITH parsed AS (
     SELECT *
     FROM jsonb_to_recordset(p_features) AS x(
       scope_code TEXT, path TEXT, name_kiny TEXT, name_eng TEXT, level TEXT,
-      geom JSONB, district_scope_code TEXT, district_name TEXT,
-      sector_scope_code TEXT, sector_name TEXT, cell_scope_code TEXT, cell_name TEXT
+      geom JSONB,
+      province_scope_code TEXT, province_name TEXT, province_name_eng TEXT,
+      district_scope_code TEXT, district_name TEXT,
+      sector_scope_code TEXT, sector_name TEXT,
+      cell_scope_code TEXT, cell_name TEXT
     )
   ),
   normalized AS (
     SELECT p.*,
-      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3)) AS polygon_geom
-    FROM parsed p WHERE p.geom IS NOT NULL
-  )
-  INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
-  SELECT district_scope_code, replace(district_scope_code, '-', '.')::ltree,
-         district_name, district_name, 'district'::boundary_level,
-         ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
-  FROM normalized
-  WHERE district_scope_code IS NOT NULL AND district_name IS NOT NULL
-    AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
-  GROUP BY district_scope_code, district_name
-  ON CONFLICT (scope_code) DO UPDATE SET
-    name_kiny = EXCLUDED.name_kiny, name_eng = EXCLUDED.name_eng,
-    geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(boundaries.geom, EXCLUDED.geom))), 3)),
-    updated_at = now(), version = boundaries.version + 1;
+      ST_Multi(ST_CollectionExtract(
+        ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3
+      )) AS polygon_geom
+    FROM parsed p
+    WHERE p.geom IS NOT NULL
+  ),
+  parent_rows AS (
+    SELECT
+      province_scope_code AS scope_code,
+      replace(province_scope_code, '-', '.') AS path,
+      province_name AS name_kiny,
+      province_name_eng AS name_eng,
+      'province'::boundary_level AS level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3)) AS geom
+    FROM normalized
+    WHERE province_scope_code IS NOT NULL AND province_name IS NOT NULL
+      AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+    GROUP BY province_scope_code, province_name, province_name_eng
 
-  -- Sector polygons.
-  WITH parsed AS (
-    SELECT *
-    FROM jsonb_to_recordset(p_features) AS x(
-      scope_code TEXT, path TEXT, name_kiny TEXT, name_eng TEXT, level TEXT,
-      geom JSONB, district_scope_code TEXT, district_name TEXT,
-      sector_scope_code TEXT, sector_name TEXT, cell_scope_code TEXT, cell_name TEXT
-    )
-  ),
-  normalized AS (
-    SELECT p.*,
-      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3)) AS polygon_geom
-    FROM parsed p WHERE p.geom IS NOT NULL
-  )
-  INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
-  SELECT sector_scope_code, replace(sector_scope_code, '-', '.')::ltree,
-         sector_name, sector_name, 'sector'::boundary_level,
-         ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
-  FROM normalized
-  WHERE sector_scope_code IS NOT NULL AND sector_name IS NOT NULL
-    AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
-  GROUP BY sector_scope_code, sector_name
-  ON CONFLICT (scope_code) DO UPDATE SET
-    name_kiny = EXCLUDED.name_kiny, name_eng = EXCLUDED.name_eng,
-    geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(boundaries.geom, EXCLUDED.geom))), 3)),
-    updated_at = now(), version = boundaries.version + 1;
+    UNION ALL
 
-  -- Cell polygons.
-  WITH parsed AS (
-    SELECT *
-    FROM jsonb_to_recordset(p_features) AS x(
-      scope_code TEXT, path TEXT, name_kiny TEXT, name_eng TEXT, level TEXT,
-      geom JSONB, district_scope_code TEXT, district_name TEXT,
-      sector_scope_code TEXT, sector_name TEXT, cell_scope_code TEXT, cell_name TEXT
-    )
-  ),
-  normalized AS (
-    SELECT p.*,
-      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3)) AS polygon_geom
-    FROM parsed p WHERE p.geom IS NOT NULL
+    SELECT
+      district_scope_code,
+      replace(district_scope_code, '-', '.'),
+      district_name,
+      district_name,
+      'district'::boundary_level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+    FROM normalized
+    WHERE district_scope_code IS NOT NULL AND district_name IS NOT NULL
+      AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+    GROUP BY district_scope_code, district_name
+
+    UNION ALL
+
+    SELECT
+      sector_scope_code,
+      replace(sector_scope_code, '-', '.'),
+      sector_name,
+      sector_name,
+      'sector'::boundary_level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+    FROM normalized
+    WHERE sector_scope_code IS NOT NULL AND sector_name IS NOT NULL
+      AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+    GROUP BY sector_scope_code, sector_name
+
+    UNION ALL
+
+    SELECT
+      cell_scope_code,
+      replace(cell_scope_code, '-', '.'),
+      cell_name,
+      cell_name,
+      'cell'::boundary_level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+    FROM normalized
+    WHERE cell_scope_code IS NOT NULL AND cell_name IS NOT NULL
+      AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+    GROUP BY cell_scope_code, cell_name
   )
   INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
-  SELECT cell_scope_code, replace(cell_scope_code, '-', '.')::ltree,
-         cell_name, cell_name, 'cell'::boundary_level,
-         ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
-  FROM normalized
-  WHERE cell_scope_code IS NOT NULL AND cell_name IS NOT NULL
-    AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
-  GROUP BY cell_scope_code, cell_name
+  SELECT scope_code, path::ltree, name_kiny, name_eng, level, geom
+  FROM parent_rows
+  WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
   ON CONFLICT (scope_code) DO UPDATE SET
-    name_kiny = EXCLUDED.name_kiny, name_eng = EXCLUDED.name_eng,
-    geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(boundaries.geom, EXCLUDED.geom))), 3)),
-    updated_at = now(), version = boundaries.version + 1;
+    path = EXCLUDED.path,
+    name_kiny = EXCLUDED.name_kiny,
+    name_eng = EXCLUDED.name_eng,
+    level = EXCLUDED.level,
+    geom = ST_Multi(ST_CollectionExtract(
+      ST_MakeValid(ST_UnaryUnion(ST_Collect(boundaries.geom, EXCLUDED.geom))), 3
+    )),
+    updated_at = now(),
+    version = boundaries.version + 1;
 
   RETURN v_village_count;
 END;
-$;
+$$;
 
 GRANT EXECUTE ON FUNCTION ingest_boundary_batch(JSONB) TO service_role;
+
 
 
 -- -----------------------------------------------------------------------------
