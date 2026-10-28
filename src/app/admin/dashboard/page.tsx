@@ -35,11 +35,7 @@ import { AddLeaderModal } from "@/components/AddLeaderModal";
 import { BulkImportModal } from "@/components/BulkImportModal";
 import { AdminDossierModal } from "@/components/admin/AdminDossierModal";
 import { RwandanSun } from "@/components/RwandanSun";
-import {
-  RWANDA_PROVINCES,
-  getDistrictsByProvince,
-  getSectorsByDistrict,
-} from "@/lib/rwanda-geo";
+import type { AdministrativeUnit } from "@/lib/rwanda-geo";
 import type { AdminTier } from "@/app/admin/login/page";
 
 interface StoredAdminSession {
@@ -53,12 +49,13 @@ interface StoredAdminSession {
 export default function AdminDashboardPage() {
   const router = useRouter();
 
-  // Current logged in governance session
+  // Current governance session. A missing session defaults to the national
+  // overview; actual scope enforcement must be performed by the authenticated API.
   const [session, setSession] = useState<StoredAdminSession>({
-    tier: "district",
-    scope_code: "RW-01-01",
-    scope_name: "Akarere ka Gasabo",
-    email: "admin@district.gov.rw",
+    tier: "national",
+    scope_code: "RW",
+    scope_name: "U Rwanda Rwose",
+    email: "admin@national.gov.rw",
     loginTime: new Date().toISOString(),
   });
 
@@ -72,12 +69,94 @@ export default function AdminDashboardPage() {
   const [reports, setReports] = useState<InactiveNumberReport[]>([]);
   const [activeTab, setActiveTab] = useState<"leaders" | "reports">("leaders");
 
-  // Cascading Drilldown inside dashboard
-  const [filterProvince, setFilterProvince] = useState("RW-01");
-  const availableDistricts = useMemo(() => getDistrictsByProvince(filterProvince), [filterProvince]);
-  const [filterDistrict, setFilterDistrict] = useState(session.tier === "district" ? session.scope_code : "RW-01-01");
-  const availableSectors = useMemo(() => getSectorsByDistrict(filterDistrict), [filterDistrict]);
+  // Nationwide filter lists are fetched from the official NISR boundary service.
+  const [provinces, setProvinces] = useState<AdministrativeUnit[]>([]);
+  const [availableDistricts, setAvailableDistricts] = useState<AdministrativeUnit[]>([]);
+  const [availableSectors, setAvailableSectors] = useState<AdministrativeUnit[]>([]);
+  const [filterProvince, setFilterProvince] = useState("");
+  const [filterDistrict, setFilterDistrict] = useState("");
   const [filterSector, setFilterSector] = useState("all");
+  const [unitError, setUnitError] = useState<string | null>(null);
+
+  async function fetchAdminUnits(
+    level: "province" | "district" | "sector",
+    parentCode?: string
+  ): Promise<AdministrativeUnit[]> {
+    const params = new URLSearchParams({ level });
+    if (parentCode) params.set("parent_code", parentCode);
+    const response = await fetch(`/api/administrative-units?${params.toString()}`, {
+      cache: "no-store",
+    });
+    const payload = (await response.json()) as {
+      status?: string;
+      units?: AdministrativeUnit[];
+      message_kiny?: string;
+    };
+    if (!response.ok || payload.status !== "success" || !Array.isArray(payload.units)) {
+      throw new Error(payload.message_kiny || "Amakuru y'inzego z'ubuyobozi ntiyabonetse.");
+    }
+    return payload.units;
+  }
+
+  useEffect(() => {
+    let active = true;
+    fetchAdminUnits("province")
+      .then((units) => {
+        if (!active) return;
+        setProvinces(units);
+      })
+      .catch((error: unknown) => {
+        if (active) setUnitError(error instanceof Error ? error.message : "Ntibyashobotse kubona intara.");
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    setUnitError(null);
+    const parent = filterProvince || undefined;
+    fetchAdminUnits("district", parent)
+      .then((units) => {
+        if (!active) return;
+        setAvailableDistricts(units);
+        setFilterDistrict((current) =>
+          current && units.some((unit) => unit.code === current) ? current : ""
+        );
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setAvailableDistricts([]);
+        setFilterDistrict("");
+        setUnitError(error instanceof Error ? error.message : "Ntibyashobotse kubona uturere.");
+      });
+    return () => { active = false; };
+  }, [filterProvince]);
+
+  useEffect(() => {
+    let active = true;
+    if (!filterDistrict) {
+      setAvailableSectors([]);
+      setFilterSector("all");
+      return () => { active = false; };
+    }
+    fetchAdminUnits("sector", filterDistrict)
+      .then((units) => {
+        if (!active) return;
+        setAvailableSectors(units);
+        setFilterSector((current) =>
+          current !== "all" && units.some((unit) => unit.code === current)
+            ? current
+            : "all"
+        );
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setAvailableSectors([]);
+        setFilterSector("all");
+        setUnitError(error instanceof Error ? error.message : "Ntibyashobotse kubona imirenge.");
+      });
+    return () => { active = false; };
+  }, [filterDistrict]);
 
   // Modals
   const [editingLeader, setEditingLeader] = useState<LeaderPublic | null>(null);
@@ -88,21 +167,33 @@ export default function AdminDashboardPage() {
   const [revealedPhones, setRevealedPhones] = useState<Record<string, string>>({});
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
-  // Load session from storage if present
+  // Load the selected scope and map it to canonical NISR hierarchy codes.
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("iwacu_admin_session");
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored) as StoredAdminSession;
-          setSession(parsed);
-          if (parsed.tier === "district") {
-            setFilterDistrict(parsed.scope_code);
-          }
-        } catch {
-          // Ignore
+    const stored = localStorage.getItem("iwacu_admin_session");
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as StoredAdminSession;
+      setSession(parsed);
+      const parts = parsed.scope_code.split("-");
+      if (parts[0] === "RW" && parts[1]?.startsWith("P")) {
+        setFilterProvince(parts.slice(0, 2).join("-"));
+        if (parsed.tier === "district" || parsed.tier === "sector" || parsed.tier === "cell") {
+          setFilterDistrict(parts.slice(0, 3).join("-"));
+        } else {
+          setFilterDistrict("");
         }
+        if (parsed.tier === "sector" || parsed.tier === "cell") {
+          setFilterSector(parts.slice(0, 4).join("-"));
+        } else {
+          setFilterSector("all");
+        }
+      } else {
+        setFilterProvince("");
+        setFilterDistrict("");
+        setFilterSector("all");
       }
+    } catch {
+      localStorage.removeItem("iwacu_admin_session");
     }
   }, []);
 
@@ -111,7 +202,7 @@ export default function AdminDashboardPage() {
     setError(null);
     try {
       const scopeParam = session.tier === "national" ? "RW" : session.scope_code;
-      const res = await fetch(`/api/leaders?scope_code=${scopeParam}&include_dossier=true`);
+      const res = await fetch(`/api/leaders?scope_code=${encodeURIComponent(scopeParam)}&include_dossier=true`);
       const json = await res.json();
       if (res.ok && json.leaders) {
         setLeaders(json.leaders);
@@ -251,10 +342,14 @@ export default function AdminDashboardPage() {
     const matchesLevel =
       filterLevel === "all" || l.level?.toLowerCase() === filterLevel.toLowerCase();
 
+    const matchesProvince =
+      !filterProvince || l.scope_code.startsWith(filterProvince);
+    const matchesDistrict =
+      !filterDistrict || l.scope_code.startsWith(filterDistrict);
     const matchesSector =
       filterSector === "all" || l.scope_code.startsWith(filterSector);
 
-    return matchesSearch && matchesLevel && matchesSector;
+    return matchesSearch && matchesLevel && matchesProvince && matchesDistrict && matchesSector;
   });
 
   function handleLogout() {
@@ -471,7 +566,26 @@ export default function AdminDashboardPage() {
                   <Filter className="h-3.5 w-3.5" /> Akayunguruzo:
                 </span>
 
-                {/* National or Province can drill by district */}
+                {/* National users can select one province or see all provinces. */}
+                {session.tier === "national" && (
+                  <select
+                    value={filterProvince}
+                    onChange={(e) => {
+                      setFilterProvince(e.target.value);
+                      setFilterDistrict("");
+                      setFilterSector("all");
+                    }}
+                    aria-label="Hitamo Intara cyangwa Umujyi"
+                    className="rounded-xl border border-input bg-background px-3 py-1.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A3E0]"
+                  >
+                    <option value="">Intara zose n'Umujyi wa Kigali</option>
+                    {provinces.map((p) => (
+                      <option key={p.code} value={p.code}>{p.name_kiny}</option>
+                    ))}
+                  </select>
+                )}
+
+                {/* National and province scopes can filter by any district. */}
                 {(session.tier === "national" || session.tier === "province") && (
                   <select
                     value={filterDistrict}
@@ -479,14 +593,18 @@ export default function AdminDashboardPage() {
                       setFilterDistrict(e.target.value);
                       setFilterSector("all");
                     }}
+                    aria-label="Hitamo Akarere"
                     className="rounded-xl border border-input bg-background px-3 py-1.5 text-xs font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A3E0]"
                   >
+                    <option value="">Uturere twose</option>
                     {availableDistricts.map((d) => (
-                      <option key={d.code} value={d.code}>
-                        Akarere ka {d.name_kiny}
-                      </option>
+                      <option key={d.code} value={d.code}>Akarere ka {d.name_kiny}</option>
                     ))}
                   </select>
+                )}
+
+                {unitError && (
+                  <span role="alert" className="text-xs text-red-600">{unitError}</span>
                 )}
 
                 {/* Drill by Sector */}
