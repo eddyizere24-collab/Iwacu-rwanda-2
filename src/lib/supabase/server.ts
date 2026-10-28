@@ -50,3 +50,15 @@ export function createSupabaseServiceClient() {
     },
   });
 }
+
+/**
+ * Reports whether all required Supabase server credentials are configured.
+ * Retained for API routes that safely fall back to demo data when they are absent.
+ */
+export function isSupabaseConfigured(): boolean {
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY &&
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+}
