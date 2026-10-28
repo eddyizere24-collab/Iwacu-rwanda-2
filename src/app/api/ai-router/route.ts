@@ -56,16 +56,22 @@ function provinceKiny(name: string): string {
   return names[normalized] ?? name;
 }
 
-function codes(attrs: Attrs) {
+function codes(attrs: Attrs, level: UnitLevel) {
   const provinceId = value(attrs, "province_id");
   const districtId = value(attrs, "district_id");
   const sectorId = value(attrs, "sector_id");
   const cellId = value(attrs, "cell_id");
   const villageId = value(attrs, "village_id");
-  if (![provinceId, districtId].every((id) => /^\d+$/.test(id))) return null;
+
+  if (!/^[1-5]$/.test(provinceId)) return null;
+  if (level !== "province" && !/^\d{2}$/.test(districtId)) return null;
+  if (["sector", "cell", "village"].includes(level) && !/^\d{4}$/.test(sectorId)) return null;
+  if (["cell", "village"].includes(level) && !/^\d{6}$/.test(cellId)) return null;
+  if (level === "village" && !/^\d{8}$/.test(villageId)) return null;
+
   const province = `RW-P${provinceId}`;
-  const district = `${province}-D${districtId}`;
-  const sector = sectorId ? `${district}-S${sectorId}` : undefined;
+  const district = districtId ? `${province}-D${districtId}` : undefined;
+  const sector = district && sectorId ? `${district}-S${sectorId}` : undefined;
   const cell = sector && cellId ? `${sector}-C${cellId}` : undefined;
   const village = cell && villageId ? `${cell}-V${villageId}` : undefined;
   return { province, district, sector, cell, village };
@@ -162,7 +168,7 @@ async function findOfficialUnit(query: string): Promise<OfficialUnit | null> {
 
       const attrs = payload.features[0]?.attributes;
       if (!attrs) continue;
-      const adminCodes = codes(attrs);
+      const adminCodes = codes(attrs, level);
       if (!adminCodes) continue;
       const nameField = level === "province" ? "province" :
         level === "district" ? "district" :
