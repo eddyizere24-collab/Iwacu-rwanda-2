@@ -209,18 +209,21 @@ async function buildHierarchy(
   const parts = topVillage.scope_code.split("-");
 
   const prefixes: {
-    level: "cell" | "sector" | "district";
+    level: "province" | "district" | "sector" | "cell";
     code: string;
   }[] = [];
 
-  if (parts.length >= 4) {
-    prefixes.push({ level: "cell", code: parts.slice(0, 4).join("-") });
-  }
-  if (parts.length >= 3) {
-    prefixes.push({ level: "sector", code: parts.slice(0, 3).join("-") });
-  }
-  if (parts.length >= 2) {
-    prefixes.push({ level: "district", code: parts.slice(0, 2).join("-") });
+  // Canonical NISR-derived codes: RW-P01-D11-S01-C01-V01.
+  if (parts[1]?.startsWith("P") && parts[2]?.startsWith("D")) {
+    if (parts.length >= 2) prefixes.push({ level: "province", code: parts.slice(0, 2).join("-") });
+    if (parts.length >= 3) prefixes.push({ level: "district", code: parts.slice(0, 3).join("-") });
+    if (parts.length >= 4) prefixes.push({ level: "sector", code: parts.slice(0, 4).join("-") });
+    if (parts.length >= 5) prefixes.push({ level: "cell", code: parts.slice(0, 5).join("-") });
+  } else {
+    // Compatibility for older local test data.
+    if (parts.length >= 4) prefixes.push({ level: "cell", code: parts.slice(0, 4).join("-") });
+    if (parts.length >= 3) prefixes.push({ level: "sector", code: parts.slice(0, 3).join("-") });
+    if (parts.length >= 2) prefixes.push({ level: "district", code: parts.slice(0, 2).join("-") });
   }
 
   for (const { level, code } of prefixes) {
@@ -254,6 +257,7 @@ function collectScopeCodes(
 ): string[] {
   const codes = new Set<string>();
   for (const m of matches) codes.add(m.scope_code);
+  if (hierarchy.province) codes.add(hierarchy.province.scope_code);
   if (hierarchy.village) codes.add(hierarchy.village.scope_code);
   if (hierarchy.cell) codes.add(hierarchy.cell.scope_code);
   if (hierarchy.sector) codes.add(hierarchy.sector.scope_code);
