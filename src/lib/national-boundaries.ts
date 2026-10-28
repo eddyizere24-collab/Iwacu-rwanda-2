@@ -247,7 +247,7 @@ export async function locateFromOfficialNationalBoundaries(
   }
 
   const provinceNameEng = field(top.props, "province");
-  const provinceNameKey = provinceNameEng.toLowerCase().replace(/\\s+/g, " ").trim();
+  const provinceNameKey = provinceNameEng.toLowerCase().replace(/\s+/g, " ").trim();
   const provinceNamesKiny: Record<string, string> = {
     "city of kigali": "Umujyi wa Kigali",
     "kigali city": "Umujyi wa Kigali",
