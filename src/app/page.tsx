@@ -216,41 +216,50 @@ export default function HomePage() {
               </span>
             </div>
 
-            {/* Breadcrumb Hierarchy: Umudugudu → Akagari → Umurenge → Akarere → Intara */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {/* Administrative hierarchy uses the matched official boundary data. */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
               <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
                 <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
                   Intara / Umujyi
                 </span>
                 <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  Umujyi wa Kigali
+                  {data.hierarchy?.province?.name_kiny || "Ntibyemejwe"}
                 </span>
               </div>
 
               <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
                 <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Akarere (District)
+                  Akarere
                 </span>
                 <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.district?.name_kiny || "Gasabo"}
+                  {data.hierarchy?.district?.name_kiny || "Ntibyemejwe"}
                 </span>
               </div>
 
               <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
                 <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Umurenge (Sector)
+                  Umurenge
                 </span>
                 <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.sector?.name_kiny || data.matches[0]?.name_kiny || "Kacyiru"}
+                  {data.hierarchy?.sector?.name_kiny || "Ntibyemejwe"}
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
+                  Akagari
+                </span>
+                <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
+                  {data.hierarchy?.cell?.name_kiny || "Ntibyemejwe"}
                 </span>
               </div>
 
               <div className="rounded-xl border border-blue-600/30 bg-blue-50/50 dark:bg-blue-950/20 p-3">
                 <span className="text-[10px] uppercase font-bold text-blue-700 dark:text-blue-400 tracking-wider block">
-                  Umudugudu (Village)
+                  Umudugudu
                 </span>
                 <span className="text-xs font-bold text-blue-700 dark:text-blue-300 mt-0.5 block truncate">
-                  {data.hierarchy?.village?.name_kiny || data.matches[0]?.name_kiny}
+                  {data.hierarchy?.village?.name_kiny || data.matches[0]?.name_kiny || "Ntibyemejwe"}
                 </span>
               </div>
             </div>
