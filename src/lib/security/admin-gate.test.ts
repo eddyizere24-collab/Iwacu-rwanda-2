@@ -16,7 +16,8 @@ describe("adminCanManageScope", () => {
   it("allows descendants of the assigned scope", () => {
     assert.equal(adminCanManageScope(districtAdmin, "RW-01-01-02"), true);
     assert.equal(adminCanManageScope(districtAdmin, "RW-01-01-02-03"), true);
-    assert.equal(adminCanManageScope(districtAdmin, "RW-01-01-02-03"), true);
+    // Full hierarchy reaches village level (five segments after RW).
+    assert.equal(adminCanManageScope(districtAdmin, "RW-01-01-02-03-04"), true);
   });
 
   it("rejects sibling scopes and prefix lookalikes", () => {
@@ -42,7 +43,8 @@ describe("adminCanManageScope", () => {
     assert.equal(adminCanManageScope(superAdmin, "RW"), true);
     assert.equal(adminCanManageScope(superAdmin, "RW-01-01-02-03"), true);
     assert.equal(adminCanManageScope(superAdmin, "RW-01-%"), false);
-    assert.equal(adminCanManageScope(superAdmin, "RW-01-01-02-03-04-05"), false);
+    assert.equal(adminCanManageScope(superAdmin, "RW-01-01-02-03-04"), true);
+    assert.equal(adminCanManageScope(superAdmin, "RW-01-01-02-03-04-05-06"), false);
   });
 });
 
