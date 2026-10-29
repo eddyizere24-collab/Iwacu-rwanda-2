@@ -320,19 +320,36 @@ function getBestPosition(timeoutMs: number): Promise<GeolocationPosition> {
       settled = true;
       if (timer) clearTimeout(timer);
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-      if (best) {
+
+      // If GPS is already reasonably precise, use it. Otherwise also try the
+      // browser's coarse network/Wi-Fi provider and keep whichever fix is better.
+      if (best && best.coords.accuracy <= 150) {
         resolve(best);
         return;
       }
-      if (lastError?.code === lastError.PERMISSION_DENIED) {
+      if (lastError?.code === lastError.PERMISSION_DENIED && !best) {
         reject(lastError);
         return;
       }
-      navigator.geolocation.getCurrentPosition(resolve, reject, {
-        enableHighAccuracy: false,
-        timeout: 5_000,
-        maximumAge: 300_000,
-      });
+      const bestSoFar = best;
+      navigator.geolocation.getCurrentPosition(
+        (coarse) => {
+          if (!bestSoFar || coarse.coords.accuracy < bestSoFar.coords.accuracy) {
+            resolve(coarse);
+          } else {
+            resolve(bestSoFar);
+          }
+        },
+        (error) => {
+          if (bestSoFar) resolve(bestSoFar);
+          else reject(error);
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: 5_000,
+          maximumAge: 300_000,
+        }
+      );
     };
 
     timer = setTimeout(finish, Math.min(timeoutMs, 10_000));
