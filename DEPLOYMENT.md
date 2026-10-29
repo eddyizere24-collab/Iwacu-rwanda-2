@@ -34,6 +34,7 @@ The script creates:
 For a **fresh** database, apply these files in order: `sql/schema.sql`, `sql/security-hardening-migration.sql`, `sql/postgis-extensions-search-path-migration.sql`, `sql/security-hardening-followup-migration.sql`, then `sql/security-public-grants-migration.sql` and `sql/leader-audit-foreign-key-indexes.sql`.
 
 For an **existing** database, confirm which migrations are already recorded and apply only the missing migrations, once, in order. Do not rerun migrations after they have been successfully applied. The search-path migration prepares app-owned spatial functions to resolve PostGIS in `extensions` after Support moves it. The follow-up migration moves RBAC helpers to a non-exposed schema and makes the safe leaders view use invoker permissions; the public-grants migration removes non-SELECT rights from that view.
+For the existing project's managed PostGIS move, use the copy-ready message in [`SUPABASE_SUPPORT_REQUEST.md`](SUPABASE_SUPPORT_REQUEST.md). This is a support request template, not a submitted ticket.
 
 ---
 
