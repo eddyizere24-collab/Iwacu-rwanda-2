@@ -22,8 +22,9 @@ CREATE INDEX IF NOT EXISTS idx_inactive_number_reports_status_created
 CREATE INDEX IF NOT EXISTS idx_inactive_number_reports_leader
   ON public.inactive_number_reports (leader_id);
 ALTER TABLE public.inactive_number_reports ENABLE ROW LEVEL SECURITY;
--- The explicit deny-all browser policy is added by
--- deny-browser-access-to-inactive-reports.sql in the documented migration order.
+-- schema.sql defines the deny-all policy for fresh installs; the separate
+-- deny-browser-access-to-inactive-reports.sql migration reasserts it safely
+-- when upgrading a database where this table was introduced later.
 
 REVOKE ALL ON TABLE public.inactive_number_reports FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.inactive_number_reports TO service_role;
