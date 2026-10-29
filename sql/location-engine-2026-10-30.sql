@@ -120,5 +120,9 @@ AS $function$
   ORDER BY confidence DESC;
 $function$;
 
+-- Public callers may read only official boundary geometry/path columns;
+-- RLS still limits these reads to active public boundary rows.
+GRANT SELECT (geom, path) ON TABLE public.boundaries TO anon, authenticated;
+
 REVOKE ALL ON FUNCTION public.calculate_location_confidence(double precision, double precision, double precision) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.calculate_location_confidence(double precision, double precision, double precision) TO anon, authenticated, service_role;
