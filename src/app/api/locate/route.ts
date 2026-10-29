@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabasePublicClient, isSupabasePublicConfigured } from "@/lib/supabase/server";
 import { createLocateError } from "@/lib/utils/errors";
-import { locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
+import { listOfficialNationalLocationIndex, locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
 import type { LocateResponse, LocateSuccess } from "@/types/location";
@@ -366,44 +366,61 @@ async function respondWithManualSelection(
 /** Search official village names, or browse the hierarchy from province to village. */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
+    const params = new URL(req.url).searchParams;
+
+    if (params.get("index") === "1") {
+      const cacheHeaders = {
+        "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+      };
+
+      if (isSupabasePublicConfigured()) {
+        const supabase = createSupabasePublicClient();
+        const pageSize = 1000;
+        const starts = Array.from({ length: 18 }, (_, index) => index * pageSize);
+        const pageResults = await Promise.all(starts.map(async (start) => {
+          const result = await supabase.from("boundaries")
+            .select("scope_code, name_kiny, name_eng, level")
+            .is("valid_to", null)
+            .order("scope_code", { ascending: true })
+            .range(start, start + pageSize - 1);
+          return { start, ...result };
+        }));
+        const failedPage = pageResults.find((page) => page.error);
+        const rows = failedPage ? [] : pageResults.flatMap((page) => page.data ?? []);
+        if (!failedPage && rows.length > 0) {
+          const choices = rows
+            .filter((row) => row.level !== "country")
+            .map((row) => ({
+              scope_code: row.scope_code,
+              name_kiny: row.name_kiny,
+              name_eng: row.name_eng,
+              level: row.level,
+              // Official scope codes are hierarchical; no private UUID fields needed.
+              parent_scope_code: row.level === "province" ? null : row.scope_code.split("-").slice(0, -1).join("-"),
+            }));
+          return NextResponse.json({ status: "index", choices, source: "supabase" }, {
+            headers: cacheHeaders,
+          });
+        }
+        console.error("[locate] Supabase national index unavailable; trying official NISR index:",
+          failedPage?.error?.message ?? "no active boundary rows");
+      }
+
+      try {
+        const choices = await listOfficialNationalLocationIndex();
+        return NextResponse.json({ status: "index", choices, source: "nisr-fallback" }, {
+          headers: cacheHeaders,
+        });
+      } catch (error) {
+        console.error("[locate] official NISR index fallback failed:", error);
+        return NextResponse.json({ status: "error", message: "Location index unavailable." }, { status: 503 });
+      }
+    }
+
     if (!isSupabasePublicConfigured()) {
       return NextResponse.json({ status: "error", message: "Location data unavailable." }, { status: 503 });
     }
     const supabase = createSupabasePublicClient();
-    const params = new URL(req.url).searchParams;
-
-    if (params.get("index") === "1") {
-      const pageSize = 1000;
-      const starts = Array.from({ length: 18 }, (_, index) => index * pageSize);
-      const pageResults = await Promise.all(starts.map(async (start) => {
-        const result = await supabase.from("boundaries")
-          .select("scope_code, name_kiny, name_eng, level")
-          .is("valid_to", null)
-          .order("scope_code", { ascending: true })
-          .range(start, start + pageSize - 1);
-        return { start, ...result };
-      }));
-      const failedPage = pageResults.find((page) => page.error);
-      if (failedPage) {
-        console.error("[locate] national index page query failed:", failedPage.error?.message);
-        return NextResponse.json({ status: "error", message: "Location index unavailable." }, { status: 503 });
-      }
-      const rows = pageResults.flatMap((page) => page.data ?? []);
-      const choices = rows
-        .filter((row) => row.level !== "country")
-        .map((row) => ({
-          scope_code: row.scope_code,
-          name_kiny: row.name_kiny,
-          name_eng: row.name_eng,
-          level: row.level,
-          // Official scope codes are hierarchical; no private UUID fields needed.
-          parent_scope_code: row.level === "province" ? null : row.scope_code.split("-").slice(0, -1).join("-"),
-        }));
-      return NextResponse.json({ status: "index", choices }, {
-        headers: { "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800" },
-      });
-    }
-
     const q = (params.get("q") ?? "").trim().replace(/[%,_()]/g, " ").slice(0, 80);
     const parentScopeCode = (params.get("parent_scope_code") ?? "").trim();
     const requestedLevel = (params.get("level") ?? "province").trim();
