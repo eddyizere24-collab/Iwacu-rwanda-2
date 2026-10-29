@@ -55,8 +55,16 @@ export async function POST(req: NextRequest) {
 
 /** Listing reports is admin-only. */
 export async function GET(req: NextRequest) {
-  const gate = requireAdminWrite(req);
+  const gate = await requireAdminWrite(req);
   if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
+  // Reports currently lack a canonical boundary scope code, so only a
+  // super-admin may list or resolve them until scoped report storage exists.
+  if (!gate.admin.isSuperAdmin) {
+    return NextResponse.json(
+      { status: "error", message_kiny: "Kugeza igihe raporo zizaba zifite kode y'aho zaturutse, abashobora kuzigera ni abayobozi bakuru gusa." },
+      { status: 403 }
+    );
+  }
 
   try {
     const reports = getMockInactiveReports();
@@ -75,8 +83,14 @@ export async function GET(req: NextRequest) {
 
 /** Resolving reports is admin-only. */
 export async function PATCH(req: NextRequest) {
-  const gate = requireAdminWrite(req);
+  const gate = await requireAdminWrite(req);
   if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
+  if (!gate.admin.isSuperAdmin) {
+    return NextResponse.json(
+      { status: "error", message_kiny: "Kugeza igihe raporo zizaba zifite kode y'aho zaturutse, abashobora kuzikemura ni abayobozi bakuru gusa." },
+      { status: 403 }
+    );
+  }
 
   try {
     const body = await req.json();
