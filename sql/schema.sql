@@ -193,7 +193,7 @@ CREATE OR REPLACE FUNCTION check_version(
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
-AS $
+AS $$
 DECLARE
   current_version INTEGER;
 BEGIN
@@ -215,7 +215,7 @@ BEGIN
 
   RETURN true;
 END;
-$;
+$$;
 
 REVOKE EXECUTE ON FUNCTION public.check_version(TEXT, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.check_version(TEXT, UUID, INTEGER) TO service_role;
@@ -245,8 +245,23 @@ AS $
   );
 $;
 
+CREATE OR REPLACE FUNCTION public.current_user_admin_scope()
+RETURNS TEXT
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $
+  SELECT ap.scope_code
+  FROM public.admin_profiles AS ap
+  WHERE ap.user_id = auth.uid()
+  LIMIT 1;
+$;
+
 REVOKE ALL ON FUNCTION public.is_current_user_super_admin() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.current_user_admin_scope() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.is_current_user_super_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.current_user_admin_scope() TO authenticated;
 
 -- BOUNDARIES: Public read (anonymous citizens)
 CREATE POLICY "boundaries_public_read"
@@ -276,36 +291,21 @@ CREATE POLICY "leaders_scoped_admin_write"
   ON leaders FOR ALL
   TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid()
-        AND (
-          ap.is_super_admin = true
-          OR leaders.scope_code = ap.scope_code
-          OR leaders.scope_code LIKE ap.scope_code || '-%'
-        )
-    )
+    public.is_current_user_super_admin()
+    OR leaders.scope_code = public.current_user_admin_scope()
+    OR leaders.scope_code LIKE public.current_user_admin_scope() || '-%'
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid()
-        AND (
-          ap.is_super_admin = true
-          OR leaders.scope_code = ap.scope_code
-          OR leaders.scope_code LIKE ap.scope_code || '-%'
-        )
-    )
+    public.is_current_user_super_admin()
+    OR leaders.scope_code = public.current_user_admin_scope()
+    OR leaders.scope_code LIKE public.current_user_admin_scope() || '-%'
   );
 
 -- ADMIN_PROFILES: Users can read their own profile; super-admin can manage all
 CREATE POLICY "admin_profiles_self_read"
   ON admin_profiles FOR SELECT
   TO authenticated
-  USING (user_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM admin_profiles ap
-    WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-  ));
+  USING (user_id = auth.uid() OR public.is_current_user_super_admin());
 
 CREATE POLICY "admin_profiles_super_admin_write"
   ON admin_profiles FOR ALL
