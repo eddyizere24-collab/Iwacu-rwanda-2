@@ -31,7 +31,7 @@ The script creates:
 - Tables: `boundaries`, `leaders`, `admin_profiles`, `audit_logs`
 - GiST indexes, RLS policies, views, and helper functions
 
-For a **fresh** database, apply these files in order: `sql/schema.sql`, `sql/security-hardening-migration.sql`, `sql/postgis-extensions-search-path-migration.sql`, `sql/security-hardening-followup-migration.sql`, then `sql/security-public-grants-migration.sql` and `sql/leader-audit-foreign-key-indexes.sql`.
+For a **fresh** database, apply these files in order: `sql/schema.sql`, `sql/security-hardening-migration.sql`, `sql/postgis-extensions-search-path-migration.sql`, `sql/security-hardening-followup-migration.sql`, then `sql/security-public-grants-migration.sql`, `sql/leader-audit-foreign-key-indexes.sql`, and `sql/ltree-extensions-migration.sql`. The ltree migration is idempotent: it moves an existing `ltree` extension from `public` to `extensions`, or does nothing if it is already there.
 
 For an **existing** database, confirm which migrations are already recorded and apply only the missing migrations, once, in order. Do not rerun migrations after they have been successfully applied. The search-path migration prepares app-owned spatial functions to resolve PostGIS in `extensions` after Support moves it. The follow-up migration moves RBAC helpers to a non-exposed schema and makes the safe leaders view use invoker permissions; the public-grants migration removes non-SELECT rights from that view.
 For the existing project's managed PostGIS move, use the copy-ready message in [`SUPABASE_SUPPORT_REQUEST.md`](SUPABASE_SUPPORT_REQUEST.md). This is a support request template, not a submitted ticket.
