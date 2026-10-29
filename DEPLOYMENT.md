@@ -31,9 +31,9 @@ The script creates:
 - Tables: `boundaries`, `leaders`, `admin_profiles`, `audit_logs`
 - GiST indexes, RLS policies, views, and helper functions
 
-For a **fresh** database, apply these files in order: `sql/schema.sql`, `sql/security-hardening-migration.sql`, then `sql/security-hardening-followup-migration.sql`.
+For a **fresh** database, apply these files in order: `sql/schema.sql`, `sql/security-hardening-migration.sql`, `sql/security-hardening-followup-migration.sql`, then `sql/security-public-grants-migration.sql`.
 
-For an **existing** database, confirm the base schema exists, then apply `sql/security-hardening-migration.sql` and the follow-up migration once each. Do not rerun either migration after it has been successfully applied. The follow-up migration moves RBAC helpers to a non-exposed schema and makes the safe leaders view use invoker permissions.
+For an **existing** database, confirm the base schema exists, then apply each migration once in order. Do not rerun migrations after they have been successfully applied. The follow-up migration moves RBAC helpers to a non-exposed schema and makes the safe leaders view use invoker permissions; the public-grants migration removes non-SELECT rights from that view.
 
 ---
 
@@ -150,7 +150,7 @@ For the security-hardening preview, configure these variables for the preview ta
 
 ### Database security note
 
-The current Supabase Security Advisor flags `public.spatial_ref_sys` because RLS is disabled on this PostGIS-managed table. It has not been changed automatically. If the deployment owner approves public read-only access to coordinate-system definitions, the proposed SQL is:
+The Supabase Security Advisor flags `public.spatial_ref_sys` because RLS is disabled on this PostGIS-managed table. Verification also shows that browser roles still have INSERT/UPDATE/DELETE privileges. A revoke migration was attempted but did not change those grants: the table is owned by `supabase_admin`, not the connected project database role. This is still critical and must not be marked fixed. A supported change executed by the actual owner/managed platform is required. If that owner approves public read-only access to coordinate-system definitions, the intended policy design would be:
 
 ```sql
 ALTER TABLE public.spatial_ref_sys ENABLE ROW LEVEL SECURITY;
@@ -160,10 +160,10 @@ CREATE POLICY spatial_ref_sys_public_read_only
   USING (true);
 ```
 
-Review the policy before running it. Do not enable RLS on this table without deciding which roles need read access.
+Review the policy before running it. The current connected role may not have permission to apply it; do not enable RLS without ensuring the read policy is created successfully and testing PostGIS-dependent application queries.
 6. After the first deploy succeeds, open the site and test:
    - GPS locate
-   - Admin login (magic link)
+   - Admin login (email and password)
    - Offline mode (Chrome DevTools → Network → Offline)
 
 ---
