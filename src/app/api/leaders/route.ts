@@ -200,9 +200,11 @@ export async function PATCH(req: NextRequest) {
 
     const supabase = createSupabaseServiceClient();
 
+    // Read only the fields needed for authorization and optimistic locking.
+    // In particular, never fetch or return the raw phone number in a conflict response.
     const { data: current, error: fetchErr } = await supabase
       .from("leaders")
-      .select("*")
+      .select("id, scope_code, first_name, last_name, role, email, photo_url, valid_to, version")
       .eq("id", id)
       .single();
 
@@ -227,7 +229,14 @@ export async function PATCH(req: NextRequest) {
           conflict: {
             server_version: current.version,
             your_version: version,
-            server_data: current,
+            server_data: {
+              first_name: current.first_name,
+              last_name: current.last_name,
+              role: current.role,
+              email: current.email,
+              photo_url: current.photo_url,
+              version: current.version,
+            },
           },
         },
         { status: 409 }
