@@ -12,6 +12,7 @@ import { createSupabasePublicClient, isSupabasePublicConfigured } from "@/lib/su
 import { createLocateError } from "@/lib/utils/errors";
 import { rankVillageCandidates } from "@/lib/location-ranking";
 import { listOfficialNationalLocationIndex, locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
+import offlineLocationIndex from "../../../../public/offline/location-index.json";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
 import type { LocateResponse, LocateSuccess } from "@/types/location";
@@ -56,7 +57,7 @@ export async function POST(
         return NextResponse.json(createLocateError("NOT_FOUND"), { status: 400 });
       }
       if (!isSupabasePublicConfigured()) {
-        return NextResponse.json(createLocateError("NETWORK_ERROR", { reason: "database_not_configured" }), { status: 503 });
+        return respondWithStaticManualSelection(scopeCode);
       }
       return respondWithManualSelection(createSupabasePublicClient(), scopeCode);
     }
@@ -407,7 +408,10 @@ async function respondWithManualSelection(
     .is("valid_to", null)
     .maybeSingle();
   if (error || !data) {
-    return NextResponse.json(createLocateError("NOT_FOUND"), { status: 404 });
+    // This bundled index is also the source for the offline picker. If the
+    // database is absent or points to an empty project, let the citizen confirm
+    // a real name from this verified index instead of hitting a dead end.
+    return respondWithStaticManualSelection(scopeCode);
   }
   const selected: ConfidenceMatch = {
     scope_code: data.scope_code,
@@ -428,6 +432,83 @@ async function respondWithManualSelection(
   };
   return NextResponse.json(response);
 }
+
+
+type StaticLocationChoice = {
+  scope_code: string;
+  name_kiny: string;
+  name_eng: string | null;
+  level: "province" | "district" | "sector" | "cell" | "village";
+  parent_scope_code: string | null;
+};
+
+function getStaticLocationChoices(): StaticLocationChoice[] {
+  const rawChoices = (offlineLocationIndex as { choices?: unknown[] }).choices;
+  if (!Array.isArray(rawChoices)) return [];
+  const levels = new Set(["province", "district", "sector", "cell", "village"]);
+  return rawChoices.flatMap((raw): StaticLocationChoice[] => {
+    if (!Array.isArray(raw) || raw.length < 5) return [];
+    const level = String(raw[3]);
+    const scopeCode = String(raw[0] ?? "");
+    const nameKiny = String(raw[1] ?? "");
+    if (!levels.has(level) || !scopeCode || !nameKiny) return [];
+    return [{
+      scope_code: scopeCode,
+      name_kiny: nameKiny,
+      name_eng: raw[2] == null ? null : String(raw[2]),
+      level: level as StaticLocationChoice["level"],
+      parent_scope_code: raw[4] == null ? null : String(raw[4]),
+    }];
+  });
+}
+
+function respondWithStaticManualSelection(scopeCode: string): NextResponse<LocateResponse> {
+  const choices = getStaticLocationChoices();
+  const selected = choices.find((item) => item.scope_code === scopeCode && item.level === "village");
+  if (!selected) {
+    return NextResponse.json(createLocateError("NOT_FOUND"), { status: 404 });
+  }
+
+  const byCode = new Map(choices.map((item) => [item.scope_code, item]));
+  const hierarchy: LocateSuccess["hierarchy"] = {};
+  let current: StaticLocationChoice | undefined = selected;
+  let village: ConfidenceMatch | null = null;
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    const match: ConfidenceMatch = {
+      scope_code: current.scope_code,
+      name_kiny: current.name_kiny,
+      name_eng: current.name_eng,
+      level: current.level,
+      confidence: 100,
+      intersection_area_m2: 0,
+    };
+    if (current.level === "province") hierarchy.province = match;
+    if (current.level === "district") hierarchy.district = match;
+    if (current.level === "sector") hierarchy.sector = match;
+    if (current.level === "cell") hierarchy.cell = match;
+    if (current.level === "village") {
+      hierarchy.village = match;
+      village = match;
+    }
+    current = current.parent_scope_code ? byCode.get(current.parent_scope_code) : undefined;
+  }
+
+  if (!village) {
+    return NextResponse.json(createLocateError("NOT_FOUND"), { status: 404 });
+  }
+  const response: LocateSuccess = {
+    status: "success",
+    matches: [village],
+    hierarchy,
+    leaders: [],
+    source: "manual",
+    warning: "USER_CONFIRMED_STATIC_INDEX",
+  };
+  return NextResponse.json(response, {
+    headers: { "Cache-Control": "public, max-age=300, stale-while-revalidate=3600" },
+  });
+}
+
 
 /** Search official village names, or browse the hierarchy from province to village. */
 export async function GET(req: NextRequest): Promise<NextResponse> {
