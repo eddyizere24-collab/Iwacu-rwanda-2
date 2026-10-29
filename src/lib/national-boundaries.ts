@@ -64,6 +64,112 @@ function scopeCodes(props: Record<string, unknown>) {
   return { province, district, sector, cell, village };
 }
 
+export type OfficialNationalIndexChoice = {
+  scope_code: string;
+  name_kiny: string;
+  name_eng: string | null;
+  level: "province" | "district" | "sector" | "cell" | "village";
+  parent_scope_code: string | null;
+};
+
+/**
+ * Fallback index sourced only from NISR's published 2022 village layer.
+ * It contains no made-up names or geometry. NISR documents that its data
+ * covers 14,816 of 14,837 gazetted villages, so this is a resilience fallback,
+ * not a replacement for the more complete populated Supabase index.
+ */
+export async function listOfficialNationalLocationIndex(): Promise<OfficialNationalIndexChoice[]> {
+  const params = new URLSearchParams({
+    where: "1=1",
+    outFields: "province_id,province,district_id,district,sector_id,sector,cell_id,cell,village_id,village",
+    returnGeometry: "false",
+    resultRecordCount: "16000",
+    resultOffset: "0",
+    orderByFields: "village_id",
+    f: "json",
+  });
+
+  const response = await fetch(NISR_QUERY_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+    body: params.toString(),
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) {
+    throw new Error(`NISR location index returned HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    features?: Array<{ attributes?: Record<string, unknown>; properties?: Record<string, unknown> }>;
+    error?: { message?: string };
+  };
+  if (!Array.isArray(payload.features)) {
+    throw new Error(payload.error?.message ?? "NISR location index response had no features");
+  }
+
+  const index = new Map<string, OfficialNationalIndexChoice>();
+  const add = (
+    scopeCode: string,
+    level: OfficialNationalIndexChoice["level"],
+    parentScopeCode: string | null,
+    nameKiny: string,
+    nameEng: string | null
+  ) => {
+    if (!scopeCode || !nameKiny || index.has(scopeCode)) return;
+    index.set(scopeCode, {
+      scope_code: scopeCode,
+      level,
+      parent_scope_code: parentScopeCode,
+      name_kiny: nameKiny,
+      name_eng: nameEng,
+    });
+  };
+
+  const provinceNamesKiny: Record<string, string> = {
+    "city of kigali": "Umujyi wa Kigali",
+    "kigali city": "Umujyi wa Kigali",
+    "kigali": "Umujyi wa Kigali",
+    "southern province": "Intara y'Amajyepfo",
+    "western province": "Intara y'Iburengerazuba",
+    "northern province": "Intara y'Amajyaruguru",
+    "eastern province": "Intara y'Iburasirazuba",
+  };
+
+  for (const feature of payload.features) {
+    const props = feature.attributes ?? feature.properties;
+    if (!props) continue;
+    const codes = scopeCodes(props);
+    if (!codes) continue;
+
+    const provinceNameEng = field(props, "province");
+    const provinceNameKey = provinceNameEng.toLowerCase().replace(/\s+/g, " ").trim();
+    const provinceNameKiny = provinceNamesKiny[provinceNameKey] ?? provinceNameEng;
+    const districtName = field(props, "district");
+    const sectorName = field(props, "sector");
+    const cellName = field(props, "cell");
+    const villageName = field(props, "village");
+
+    add(codes.province, "province", null, provinceNameKiny, provinceNameEng || null);
+    add(codes.district, "district", codes.province, districtName, districtName || null);
+    add(codes.sector, "sector", codes.district, sectorName, sectorName || null);
+    add(codes.cell, "cell", codes.sector, cellName, cellName || null);
+    add(codes.village, "village", codes.cell, villageName, villageName || null);
+  }
+
+  const levelOrder: Record<OfficialNationalIndexChoice["level"], number> = {
+    province: 0,
+    district: 1,
+    sector: 2,
+    cell: 3,
+    village: 4,
+  };
+  return Array.from(index.values()).sort((a, b) =>
+    levelOrder[a.level] - levelOrder[b.level] ||
+    a.name_kiny.localeCompare(b.name_kiny, "rw")
+  );
+}
+
 function calculateIntersection(
   boundary: BoundaryFeature,
   accuracyCircle: Feature<Polygon>
