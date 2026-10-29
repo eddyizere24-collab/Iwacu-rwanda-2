@@ -84,9 +84,11 @@ AS $function$
     SELECT
       n.*,
       EXP(
-        -n.distance_m / GREATEST(250.0, p_accuracy_m)
+        -n.distance_m / GREATEST(250.0, LEAST(GREATEST(COALESCE(p_accuracy_m, 100), 1), 50000))
       ) AS weight,
-      SUM(EXP(-n.distance_m / GREATEST(250.0, LEAST(GREATEST(COALESCE(p_accuracy_m, 100), 1), 50000)))) OVER () AS total_weight
+      SUM(
+        EXP(-n.distance_m / GREATEST(250.0, LEAST(GREATEST(COALESCE(p_accuracy_m, 100), 1), 50000)))
+      ) OVER () AS total_weight
     FROM nearest AS n
     WHERE n.distance_m <= LEAST(GREATEST(COALESCE(p_accuracy_m, 100) * 2, 1000.0), 50000.0)
   )
