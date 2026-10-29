@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getMockInactiveReports, addMockInactiveReport, resolveMockInactiveReport } from "@/lib/mock-data";
+import {
+  getMockInactiveReports,
+  addMockInactiveReport,
+  resolveMockInactiveReport,
+} from "@/lib/mock-data";
+import { requireAdminWrite } from "@/lib/security/admin-gate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +18,7 @@ const ReportSchema = z.object({
   citizen_comment: z.string().max(300).optional(),
 });
 
+/** Citizens may report a dead number (public POST). */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -34,8 +40,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       status: "success",
-      message_kiny: "Murakoze! Raporo yanyu yohererejwe ubuyobozi bw'Akarere n'Umurenge kugira ngo bayisuzume.",
-      report,
+      message_kiny:
+        "Murakoze! Raporo yanyu yohererejwe ubuyobozi bw'Akarere n'Umurenge kugira ngo bayisuzume.",
+      report_id: report.id,
     });
   } catch (err) {
     console.error("[report-number POST] error:", err);
@@ -46,7 +53,11 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET() {
+/** Listing reports is admin-only. */
+export async function GET(req: NextRequest) {
+  const gate = requireAdminWrite(req);
+  if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
+
   try {
     const reports = getMockInactiveReports();
     return NextResponse.json({
@@ -62,17 +73,27 @@ export async function GET() {
   }
 }
 
+/** Resolving reports is admin-only. */
 export async function PATCH(req: NextRequest) {
+  const gate = requireAdminWrite(req);
+  if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
+
   try {
     const body = await req.json();
     const { report_id } = body;
     if (!report_id) {
-      return NextResponse.json({ status: "error", message_kiny: "Shyiramo id ya raporo" }, { status: 400 });
+      return NextResponse.json(
+        { status: "error", message_kiny: "Shyiramo id ya raporo" },
+        { status: 400 }
+      );
     }
 
     const resolved = resolveMockInactiveReport(report_id);
     if (!resolved) {
-      return NextResponse.json({ status: "error", message_kiny: "Raporo ntibonetse" }, { status: 404 });
+      return NextResponse.json(
+        { status: "error", message_kiny: "Raporo ntibonetse" },
+        { status: 404 }
+      );
     }
 
     return NextResponse.json({
