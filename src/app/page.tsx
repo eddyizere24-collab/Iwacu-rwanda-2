@@ -50,18 +50,18 @@ export default function HomePage() {
   function getConfidenceWording(confidence: number): { text: string; colorClass: string } {
     if (confidence >= 80) {
       return {
-        text: "Twabyizeye cyane",
+        text: "Igipimo cya GPS",
         colorClass: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300",
       };
     }
     if (confidence >= 50) {
       return {
-        text: "Birashoboka",
+        text: "Igipimo cya GPS",
         colorClass: "text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300",
       };
     }
     return {
-      text: "Ntituzi neza",
+      text: "Igipimo cya GPS",
       colorClass: "text-muted-foreground bg-muted",
     };
   }
@@ -239,7 +239,12 @@ export default function HomePage() {
             )}
             {data.source === "nearest" && (
               <p className="mb-4 rounded-xl bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-                Uyu ni umudugudu wegereye aho GPS yerekanye. Ibi ni igereranya; genzura cyangwa uhitemo undi.
+                Uyu ni umudugudu wegereye aho GPS yerekanye. Ibi ni amanota yo kugereranya, si amahirwe apimwe; genzura cyangwa uhitemo undi.
+              </p>
+            )}
+            {(data.source === "gps" || data.source === "offline") && (
+              <p className="mb-4 text-[11px] text-muted-foreground">
+                Ijanisha ryerekana igice cy'uruziga rw'ikosa rya GPS gihura n'imbibi z'umudugudu; si igipimo cy'ukuri cyapimwe ku bantu.
               </p>
             )}
 
@@ -292,7 +297,7 @@ export default function HomePage() {
             </div>
 
             {/* D1 F4 Overlap candidate villages if point lies on a border */}
-            {data.matches.length > 1 && (
+            {data.matches.length > 1 && data.source !== "manual" && (
               <div className="mt-4 border-t border-border pt-3">
                 <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
                   <Layers className="h-3.5 w-3.5 text-blue-600" />
