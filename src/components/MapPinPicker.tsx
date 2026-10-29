@@ -225,7 +225,7 @@ export function MapPinPicker({
             <div className="mt-3 rounded-xl bg-emerald-500/10 p-3">
               <p className="text-xs font-semibold">Ahantu wahisemo</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                ${selected.latitude.toFixed(4)}, ${selected.longitude.toFixed(4)}
+                {selected.latitude.toFixed(4)}, {selected.longitude.toFixed(4)}
               </p>
               <button
                 type="button"
