@@ -31,6 +31,8 @@ The script creates:
 - Tables: `boundaries`, `leaders`, `admin_profiles`, `audit_logs`
 - GiST indexes, RLS policies, views, and helper functions
 
+For an **existing** database, run `sql/security-hardening-migration.sql` after confirming the base schema is present. Do not rerun the entire base schema over an existing database.
+
 ---
 
 ## 3. Create the first Super Admin
@@ -39,7 +41,7 @@ Still in the SQL Editor, run (replace the values):
 
 ```sql
 -- 1. First create the auth user via Supabase Authentication → Users → Add user
---    (use the email the admin will log in with, set a temporary password or use magic link later)
+--    (use the email and password the admin will use for Supabase Auth)
 
 -- 2. Then link the profile (replace USER_UUID and names)
 INSERT INTO admin_profiles (user_id, full_name, scope_code, is_super_admin)
@@ -154,7 +156,7 @@ git push -u origin main
 - [ ] GPS permission prompt appears
 - [ ] Confidence percentages are shown
 - [ ] Leader cards show masked phone numbers
-- [ ] Admin can log in with magic link
+- [ ] Admin can log in with Supabase email + password after Auth is configured
 - [ ] Admin can edit a leader and sees version numbers
 - [ ] Concurrent edit returns 409 with diff (test with two browsers)
 - [ ] Service Worker registers (Application tab → Service Workers)
@@ -169,9 +171,9 @@ git push -u origin main
 | “Missing SUPABASE_SERVICE_ROLE_KEY” | Add the variable in Vercel + redeploy |
 | RLS blocks admin | Confirm the user exists in `admin_profiles` with correct `scope_code` |
 | Geometry errors on ingest | Ensure source GeoJSON is WGS84; the RPC runs `ST_MakeValid` |
-| Magic link does not arrive | Check Supabase Auth → Email templates and spam folder |
+| Admin login says Auth is not configured | Set NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY in Vercel, then redeploy |
 | Groq 401 | Verify `GROQ_API_KEY` is correct and has credits |
 
 ---
 
-**You are done.** The MVP is live.
+**Deployment is not complete until the checklist above passes against the configured live database.**
