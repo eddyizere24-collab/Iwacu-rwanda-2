@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const scopeCode = searchParams.get("scope_code") || "RW";
     const reveal = searchParams.get("reveal") === "true";
+    const requestedLeaderId = searchParams.get("leader_id");
 
     if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(scopeCode)) {
       return NextResponse.json(
@@ -54,6 +55,13 @@ export async function GET(req: NextRequest) {
         return NextResponse.json(
           { status: "error", message_kiny: "Nta burenganzira ufite bwo kubona nimero z'aho hantu." },
           { status: 403 }
+        );
+      }
+      // Reveal is deliberately limited to one explicitly requested leader.
+      if (!requestedLeaderId || !z.string().uuid().safeParse(requestedLeaderId).success) {
+        return NextResponse.json(
+          { status: "error", message_kiny: "Tanga ID y'umuyobozi ushaka kureba nimero ye.", leaders: [] },
+          { status: 400 }
         );
       }
     }
@@ -94,6 +102,9 @@ export async function GET(req: NextRequest) {
     if (scopeCode !== "RW") {
       query = query.or(`scope_code.eq.${scopeCode},scope_code.like.${scopeCode}-%`);
     }
+    if (reveal && requestedLeaderId) {
+      query = query.eq("id", requestedLeaderId);
+    }
 
     const { data, error } = await query;
     if (error) {
@@ -105,6 +116,13 @@ export async function GET(req: NextRequest) {
           leaders: [],
         },
         { status: 502 }
+      );
+    }
+
+    if (reveal && (!data || data.length === 0)) {
+      return NextResponse.json(
+        { status: "error", message_kiny: "Umuyobozi ntabonetse muri aka gace.", leaders: [] },
+        { status: 404 }
       );
     }
 
