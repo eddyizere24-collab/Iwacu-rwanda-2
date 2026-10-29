@@ -84,7 +84,7 @@ WITH country AS (
 ),
 grid AS (
   SELECT
-    makepoint(28.9 + (i % 100) * 0.02, -2.8 + ((i * 37) % 85) * 0.02) AS point_geom,
+    ST_MakePoint(28.9 + (i % 100) * 0.02, -2.8 + ((i * 37) % 85) * 0.02) AS point_geom,
     i
   FROM generate_series(1, 1000) AS n(i)
 ),
