@@ -33,6 +33,7 @@ export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => v
   const [parentScopeCode, setParentScopeCode] = useState("");
   const [query, setQuery] = useState("");
   const [choices, setChoices] = useState<Choice[]>([]);
+  const [history, setHistory] = useState<Array<{ level: BoundaryLevel; parentScopeCode: string }>>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -86,21 +87,23 @@ export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => v
       }
       return;
     }
+    setHistory((previous) => [...previous, { level, parentScopeCode }]);
     setParentScopeCode(choice.scope_code);
     setLevel(NEXT_LEVEL[choice.level] ?? "village");
   }
 
   function goBack() {
-    if (level === "province") return;
-    const previous: Record<BoundaryLevel, BoundaryLevel> = {
-      province: "province",
-      district: "province",
-      sector: "district",
-      cell: "sector",
-      village: "cell",
-    };
-    setLevel(previous[level]);
-    setParentScopeCode("");
+    setHistory((previous) => {
+      const last = previous[previous.length - 1];
+      if (last) {
+        setLevel(last.level);
+        setParentScopeCode(last.parentScopeCode);
+        return previous.slice(0, -1);
+      }
+      setLevel("province");
+      setParentScopeCode("");
+      return [];
+    });
   }
 
   return (
