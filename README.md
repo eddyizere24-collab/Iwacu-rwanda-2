@@ -9,7 +9,7 @@ Civic technology platform that lets Rwandan citizens discover their exact admini
 - **Frontend**: Next.js 15 (App Router) · React 19 · Tailwind CSS · shadcn/ui · Lucide · Inter
 - **Backend**: Next.js API Routes
 - **Database**: Supabase (PostgreSQL + PostGIS)
-- **AI**: Groq (Function Calling only — Zero PII)
+- **Assistant/search route (current implementation)**: deterministic lookup against the official NISR administrative-boundary service; no Groq/LLM call is wired into `/api/ai-router` yet.
 - **Offline**: Service Worker + Turf.js
 - **Maps**: MapLibre GL
 
@@ -33,7 +33,7 @@ npm run dev
 ## Security Controls (subject to security and legal review)
 
 - Citizens are 100 % anonymous.
-- Groq receives only natural-language queries and returns function-call intents. Zero personal or leader data ever reaches the LLM.
+- The current place-search route uses deterministic NISR lookup and does not send queries or citizen data to an LLM. Any future LLM integration requires a separate privacy review.
 - Phone numbers are masked at the API layer and only become `tel:` links after explicit user action.
 - Admin writes use optimistic locking (`version` column). Concurrent edits return HTTP 409 + diff.
 - RLS enforces scope-prefix authorization for admins.
