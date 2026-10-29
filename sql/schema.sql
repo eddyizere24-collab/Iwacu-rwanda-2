@@ -672,11 +672,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated;
 
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
-GRANT SELECT ON boundaries TO anon, authenticated;
--- The API uses the server-only service role to mask raw phone numbers.
--- Never grant direct table reads to browser-facing roles: RLS alone would
--- still allow them to select phone_number from leaders.
-REVOKE SELECT ON leaders FROM anon, authenticated;
+
+-- Browser clients use the application APIs for boundaries and leaders. The
+-- server uses the service-role key only after performing its own auth checks.
+-- Revoke all base-table privileges so browser roles cannot bypass API controls.
+REVOKE ALL PRIVILEGES ON TABLE boundaries FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE leaders FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE admin_profiles FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE audit_logs FROM anon, authenticated;
+
+-- These safe, deliberately restricted read paths are retained where needed.
 GRANT SELECT ON v_active_leaders TO anon, authenticated;
 GRANT SELECT ON admin_profiles TO authenticated;
 GRANT SELECT ON audit_logs TO authenticated;
