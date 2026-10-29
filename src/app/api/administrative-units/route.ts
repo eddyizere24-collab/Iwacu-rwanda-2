@@ -39,39 +39,44 @@ function text(value: unknown): string {
   return value === null || value === undefined ? "" : String(value).trim();
 }
 
-function parentFilter(level: string, parentCode: string): {
-  where: string;
-  parentCode: string;
-} | null {
+function parentFilter(
+  level: string,
+  parentCode: string
+): { where: string; parentCode: string } | null {
   if (level === "district") {
     if (!parentCode) return { where: "1=1", parentCode: "" };
     const match = /^RW-P([1-5])$/.exec(parentCode);
     if (!match) return null;
-    return { where: `province_id = '${match[1]}'`, parentCode };
+    return { where: "province_id = '" + match[1] + "'", parentCode };
   }
   if (level === "sector") {
     const match = /^(RW-P[1-5]-D(\d{2}))$/.exec(parentCode);
     if (!match) return null;
-    return { where: `district_id = '${match[2]}'`, parentCode };
+    return { where: "district_id = '" + match[2] + "'", parentCode };
   }
   if (level === "cell") {
     const match = /^(RW-P[1-5]-D\d{2}-S(\d{4}))$/.exec(parentCode);
     if (!match) return null;
-    return { where: `sector_id = '${match[2]}'`, parentCode };
+    return { where: "sector_id = '" + match[2] + "'", parentCode };
   }
   if (level === "village") {
     const match = /^(RW-P[1-5]-D\d{2}-S\d{4}-C(\d{6}))$/.exec(parentCode);
     if (!match) return null;
-    return { where: `cell_id = '${match[2]}'`, parentCode };
+    return { where: "cell_id = '" + match[2] + "'", parentCode };
   }
   return { where: "1=1", parentCode: "" };
 }
 
-function codeForRecord(level: string, attrs: NISRAttributes, parentCode: string): string | null {
+function codeForRecord(
+  level: string,
+  attrs: NISRAttributes,
+  parentCode: string
+): string | null {
   if (level === "province") {
     const id = text(attrs.province_id);
-    return /^[1-5]$/.test(id) ? `RW-P${id}` : null;
+    return /^[1-5]$/.test(id) ? "RW-P" + id : null;
   }
+
   const idField: Record<string, string> = {
     district: "district_id",
     sector: "sector_id",
@@ -84,100 +89,25 @@ function codeForRecord(level: string, attrs: NISRAttributes, parentCode: string)
     cell: 6,
     village: 8,
   };
+
   const id = text(attrs[idField[level]]);
-  if (!new RegExp(`^\\d{${expectedLength[level]}}import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
+  const len = expectedLength[level];
+  if (!id || id.length !== len || !/^\d+$/.test(id)) return null;
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-const NISR_QUERY_URL =
-  "https://gis-server.statistics.gov.rw/server/rest/services/Hosted/Village_Boundary_2022/FeatureServer/3/query";
-
-const QuerySchema = z.object({
-  level: z.enum(["province", "district", "sector", "cell", "village"]),
-  parent_code: z.string().max(100).optional(),
-});
-
-type NISRAttributes = Record<string, string | number | null | undefined>;
-type NISRFeature = { attributes?: NISRAttributes };
-type NISRResponse = {
-  features?: NISRFeature[];
-  error?: { message?: string; details?: string[] };
-};
-
-export interface AdministrativeUnitOption {
-  code: string;
-  name_kiny: string;
-  name_eng: string;
-  level: "province" | "district" | "sector" | "cell" | "village";
-  parent_code?: string;
-}
-
-const PROVINCE_KINY: Record<string, string> = {
-  "1": "Umujyi wa Kigali",
-  "2": "Intara y'Amajyepfo",
-  "3": "Intara y'Iburengerazuba",
-  "4": "Intara y'Amajyaruguru",
-  "5": "Intara y'Iburasirazuba",
-};
-
-function text(value: unknown): string {
-  return value === null || value === undefined ? "" : String(value).trim();
-}
-
-function parentFilter(level: string, parentCode: string): {
-  where: string;
-  parentCode: string;
-} | null {
-  if (level === "district") {
-    if (!parentCode) return { where: "1=1", parentCode: "" };
-    const match = /^RW-P([1-5])$/.exec(parentCode);
-    if (!match) return null;
-    return { where: `province_id = '${match[1]}'`, parentCode };
-  }
-  if (level === "sector") {
-    const match = /^(RW-P[1-5]-D(\d{2}))$/.exec(parentCode);
-    if (!match) return null;
-    return { where: `district_id = '${match[2]}'`, parentCode };
-  }
-  if (level === "cell") {
-    const match = /^(RW-P[1-5]-D\d{2}-S(\d{4}))$/.exec(parentCode);
-    if (!match) return null;
-    return { where: `sector_id = '${match[2]}'`, parentCode };
-  }
-  if (level === "village") {
-    const match = /^(RW-P[1-5]-D\d{2}-S\d{4}-C(\d{6}))$/.exec(parentCode);
-    if (!match) return null;
-    return { where: `cell_id = '${match[2]}'`, parentCode };
-  }
-  return { where: "1=1", parentCode: "" };
-}
-
-function codeForRecord(level: string, attrs: NISRAttributes, parentCode: string): string | null {
-  if (level === "province") {
-    const id = text(attrs.province_id);
-    return /^[1-5]$/.test(id) ? `RW-P${id}` : null;
-  }
-  const idField: Record<string, string> = {
-    district: "district_id",
-    sector: "sector_id",
-    cell: "cell_id",
-    village: "village_id",
-  };
-  const expectedLength: Record<string, number> = {
-    district: 2,
-    sector: 4,
-    cell: 6,
-    village: 8,
-  };
-).test(id)) return null;
   if (level === "district" && !parentCode) {
     const provinceId = text(attrs.province_id);
-    return /^[1-5]$/.test(provinceId) ? `RW-P${provinceId}-D${id}` : null;
+    return /^[1-5]$/.test(provinceId) ? "RW-P" + provinceId + "-D" + id : null;
   }
-  const prefix = level === "district" ? "D" : level === "sector" ? "S" : level === "cell" ? "C" : "V";
-  return `${parentCode}-${prefix}${id}`;
+
+  const prefix =
+    level === "district"
+      ? "D"
+      : level === "sector"
+        ? "S"
+        : level === "cell"
+          ? "C"
+          : "V";
+  return parentCode + "-" + prefix + id;
 }
 
 function nameFields(level: string): { field: string; idField: string } {
@@ -201,7 +131,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         status: "error",
-        message_kiny: "Urwego rw'ubuyobozi cyangwa kode y'urwego rubanziriza ntiyemewe.",
+        message_kiny:
+          "Urwego rw'ubuyobozi cyangwa kode y'urwego rubanziriza ntiyemewe.",
       },
       { status: 400 }
     );
@@ -212,10 +143,10 @@ export async function GET(req: NextRequest) {
   if (level === "province") {
     const units: AdministrativeUnitOption[] = Object.entries(PROVINCE_KINY).map(
       ([id, name]) => ({
-        code: `RW-P${id}`,
+        code: "RW-P" + id,
         name_kiny: name,
         name_eng: id === "1" ? "Kigali City" : name,
-        level: "province",
+        level: "province" as const,
       })
     );
     return NextResponse.json({
@@ -241,10 +172,14 @@ export async function GET(req: NextRequest) {
   const params = new URLSearchParams({
     f: "json",
     where: filter.where,
-    outFields: `${fields.idField},${fields.field},province_id,province,district_id,district,sector_id,sector,cell_id,cell,village_id,village`,
+    outFields:
+      fields.idField +
+      "," +
+      fields.field +
+      ",province_id,province,district_id,district,sector_id,sector,cell_id,cell,village_id,village",
     returnGeometry: "false",
     returnDistinctValues: "true",
-    orderByFields: `${fields.idField} ASC`,
+    orderByFields: fields.idField + " ASC",
     resultRecordCount: "2000",
   });
 
@@ -252,7 +187,9 @@ export async function GET(req: NextRequest) {
   try {
     response = await fetch(NISR_QUERY_URL, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+      headers: {
+        "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+      },
       body: params.toString(),
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
@@ -261,7 +198,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(
       {
         status: "error",
-        message_kiny: "Serivisi y'amakarita ya NISR ntiyabonetse. Ongera ugerageze nyuma.",
+        message_kiny:
+          "Serivisi y'amakarita ya NISR ntiyabonetse. Ongera ugerageze nyuma.",
       },
       { status: 502 }
     );
@@ -318,7 +256,7 @@ export async function GET(req: NextRequest) {
 
     const unitParent =
       level === "district" && !filter.parentCode
-        ? `RW-P${text(attrs.province_id)}`
+        ? "RW-P" + text(attrs.province_id)
         : filter.parentCode;
 
     units.push({
