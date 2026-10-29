@@ -189,11 +189,19 @@ CREATE OR REPLACE FUNCTION check_version(
   p_table TEXT,
   p_id UUID,
   p_expected_version INTEGER
-) RETURNS BOOLEAN AS $$
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $
 DECLARE
   current_version INTEGER;
 BEGIN
-  EXECUTE format('SELECT version FROM %I WHERE id = $1', p_table)
+  IF p_table NOT IN ('leaders', 'boundaries') THEN
+    RAISE EXCEPTION 'Unsupported table for version check';
+  END IF;
+
+  EXECUTE format('SELECT version FROM public.%I WHERE id = $1', p_table)
     INTO current_version
     USING p_id;
 
@@ -207,7 +215,10 @@ BEGIN
 
   RETURN true;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$;
+
+REVOKE EXECUTE ON FUNCTION public.check_version(TEXT, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.check_version(TEXT, UUID, INTEGER) TO service_role;
 
 -- -----------------------------------------------------------------------------
 -- ROW LEVEL SECURITY (RLS)
@@ -216,6 +227,26 @@ ALTER TABLE boundaries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leaders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admin_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+
+-- Avoid recursive admin_profiles RLS policies by checking the current user's
+-- profile inside a narrowly scoped SECURITY DEFINER helper.
+CREATE OR REPLACE FUNCTION public.is_current_user_super_admin()
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.admin_profiles AS ap
+    WHERE ap.user_id = auth.uid()
+      AND ap.is_super_admin IS TRUE
+  );
+$;
+
+REVOKE ALL ON FUNCTION public.is_current_user_super_admin() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_current_user_super_admin() TO authenticated;
 
 -- BOUNDARIES: Public read (anonymous citizens)
 CREATE POLICY "boundaries_public_read"
@@ -228,16 +259,10 @@ CREATE POLICY "boundaries_super_admin_write"
   ON boundaries FOR ALL
   TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   );
 
 -- LEADERS: Public read of currently active leaders only
@@ -256,7 +281,8 @@ CREATE POLICY "leaders_scoped_admin_write"
       WHERE ap.user_id = auth.uid()
         AND (
           ap.is_super_admin = true
-          OR leaders.scope_code LIKE ap.scope_code || '%'
+          OR leaders.scope_code = ap.scope_code
+          OR leaders.scope_code LIKE ap.scope_code || '-%'
         )
     )
   )
@@ -266,7 +292,8 @@ CREATE POLICY "leaders_scoped_admin_write"
       WHERE ap.user_id = auth.uid()
         AND (
           ap.is_super_admin = true
-          OR leaders.scope_code LIKE ap.scope_code || '%'
+          OR leaders.scope_code = ap.scope_code
+          OR leaders.scope_code LIKE ap.scope_code || '-%'
         )
     )
   );
@@ -284,16 +311,10 @@ CREATE POLICY "admin_profiles_super_admin_write"
   ON admin_profiles FOR ALL
   TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   );
 
 -- AUDIT_LOGS: Only super-admin can read
@@ -301,10 +322,7 @@ CREATE POLICY "audit_logs_super_admin_read"
   ON audit_logs FOR SELECT
   TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   );
 
 -- Insert into audit_logs is done via SECURITY DEFINER functions only
@@ -357,7 +375,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public
 AS $$
   WITH circle AS (
     SELECT ST_Buffer(
@@ -404,8 +422,10 @@ AS $$
   ORDER BY confidence DESC;
 $$;
 
-GRANT EXECUTE ON FUNCTION calculate_location_confidence(DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION)
-  TO anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.calculate_location_confidence(DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.calculate_location_confidence(DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION)
+  TO service_role;
 
 -- -----------------------------------------------------------------------------
 -- BOUNDARY INGEST HELPER (used by scripts/ingest-boundaries.ts)
@@ -422,7 +442,7 @@ CREATE OR REPLACE FUNCTION ingest_boundary_feature(
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
   v_geom geometry;
@@ -466,7 +486,9 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
+REVOKE EXECUTE ON FUNCTION public.ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
   TO service_role;
 
 
@@ -479,7 +501,7 @@ CREATE OR REPLACE FUNCTION ingest_boundary_batch(p_features JSONB)
 RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public
 AS $$
 DECLARE
   v_village_count INTEGER := 0;
@@ -631,13 +653,24 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION ingest_boundary_batch(JSONB) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) TO service_role;
 
 
 
 -- -----------------------------------------------------------------------------
 -- GRANTS (Supabase roles)
 -- -----------------------------------------------------------------------------
+-- Untrusted API roles must not be able to create objects in the schema used by
+-- SECURITY DEFINER routines.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, anon, authenticated;
+
+-- Avoid granting EXECUTE on future functions by default.
+-- The project is intended to apply this schema in Supabase SQL Editor as postgres.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated;
+
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT SELECT ON boundaries TO anon, authenticated;
 GRANT SELECT ON leaders TO anon, authenticated;
