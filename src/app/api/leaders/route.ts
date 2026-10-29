@@ -3,6 +3,7 @@ import { z } from "zod";
 import { isSupabaseConfigured, createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getMockLeaders, toPublicLeader, addMockLeader, deleteMockLeader } from "@/lib/mock-data";
 import { maskPhone } from "@/lib/security/mask";
+import { requireAdminWrite } from "@/lib/security/admin-gate";
 import type { LeaderPublic } from "@/types/leader";
 
 export const runtime = "nodejs";
@@ -35,15 +36,22 @@ const PatchLeaderSchema = z.object({
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const scopeCode = searchParams.get("scope_code") || "RW-01";
+    const scopeCode = searchParams.get("scope_code") || "RW";
     const reveal = searchParams.get("reveal") === "true";
-    const includeDossier = searchParams.get("include_dossier") === "true" || reveal;
+
+    if (reveal) {
+      const gate = requireAdminWrite(req);
+      if (!gate.ok) {
+        return NextResponse.json(gate.body, { status: gate.status });
+      }
+    }
 
     if (!isSupabaseConfigured()) {
       return NextResponse.json(
         {
           status: "error",
-          message_kiny: "Ububiko bw'amakuru nyayo ntiburashyirwaho. Nta makuru y'abayobozi y'icyitegererezo agaragazwa nk'ayemejwe.",
+          message_kiny:
+            "Ububiko bw'amakuru nyayo ntiburashyirwaho. Nta makuru y'abayobozi y'icyitegererezo agaragazwa nk'ayemejwe.",
           leaders: [],
         },
         { status: 503 }
@@ -90,7 +98,11 @@ export async function GET(req: NextRequest) {
 
     const leaders: LeaderPublic[] = (data || []).map((row: Record<string, unknown>) => {
       const rawB = row.boundaries;
-      const b = (Array.isArray(rawB) ? rawB[0] : rawB) as { name_kiny: string; name_eng: string | null; level: string } | null;
+      const b = (Array.isArray(rawB) ? rawB[0] : rawB) as {
+        name_kiny: string;
+        name_eng: string | null;
+        level: string;
+      } | null;
       return {
         id: row.id as string,
         scope_code: row.scope_code as string,
@@ -125,6 +137,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+  const gate = requireAdminWrite(req);
+  if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
+
   try {
     let body: unknown;
     try {
@@ -175,7 +190,6 @@ export async function PATCH(req: NextRequest) {
         );
       }
 
-      // Optimistic Locking Check: 409 Conflict if versions do not match
       if (existing.version !== version) {
         return NextResponse.json(
           {
@@ -183,29 +197,12 @@ export async function PATCH(req: NextRequest) {
             conflict: {
               server_version: existing.version,
               your_version: version,
-              server_data: {
-                first_name: existing.first_name,
-                last_name: existing.last_name,
-                role: existing.role,
-                email: existing.email,
-                photo_url: existing.photo_url,
-                phone_number: existing.phone_number,
-              },
-              your_data: {
-                first_name,
-                last_name,
-                role,
-                email,
-                photo_url,
-                phone_number,
-              },
             },
           },
           { status: 409 }
         );
       }
 
-      // Update record and increment version
       existing.first_name = first_name;
       existing.last_name = last_name;
       existing.role = role;
@@ -215,7 +212,7 @@ export async function PATCH(req: NextRequest) {
       if (photo_url !== undefined) existing.photo_url = photo_url;
       if (vision_priorities !== undefined) existing.vision_priorities = vision_priorities;
       if (office_hours !== undefined) existing.office_hours = office_hours;
-      if (social_media !== undefined) existing.social_media = social_media as any;
+      if (social_media !== undefined) existing.social_media = social_media as Record<string, string>;
       if (admin_dossier !== undefined) existing.admin_dossier = admin_dossier;
       existing.version += 1;
 
@@ -225,7 +222,6 @@ export async function PATCH(req: NextRequest) {
       });
     }
 
-    // Supabase DB path
     const supabase = createSupabaseServiceClient();
 
     const { data: current, error: fetchErr } = await supabase
@@ -249,7 +245,6 @@ export async function PATCH(req: NextRequest) {
             server_version: current.version,
             your_version: version,
             server_data: current,
-            your_data: parsed.data,
           },
         },
         { status: 409 }
@@ -298,7 +293,11 @@ export async function PATCH(req: NextRequest) {
     }
 
     const rawUpdatedB = (updated as Record<string, unknown>).boundaries;
-    const b = (Array.isArray(rawUpdatedB) ? rawUpdatedB[0] : rawUpdatedB) as { name_kiny: string; name_eng: string | null; level: string } | null;
+    const b = (Array.isArray(rawUpdatedB) ? rawUpdatedB[0] : rawUpdatedB) as {
+      name_kiny: string;
+      name_eng: string | null;
+      level: string;
+    } | null;
     const leaderPublic: LeaderPublic = {
       id: updated.id,
       scope_code: updated.scope_code,
@@ -355,6 +354,9 @@ const CreateLeaderSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const gate = requireAdminWrite(req);
+  if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
+
   try {
     const body = await req.json();
     const parsed = CreateLeaderSchema.safeParse(body);
@@ -362,6 +364,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { status: "error", message_kiny: "Amakuru ntiyuzuye neza", errors: parsed.error.flatten() },
         { status: 422 }
+      );
+    }
+
+    if (!isSupabaseConfigured()) {
+      return NextResponse.json(
+        {
+          status: "error",
+          message_kiny:
+            "Ububiko bw'amakuru ntiburashyirwaho. Ntihashobora gushyirwaho umuyobozi w'ukuri.",
+        },
+        { status: 503 }
       );
     }
 
@@ -381,7 +394,7 @@ export async function POST(req: NextRequest) {
       verified_by: parsed.data.verified_by || "Urwego rw'Akarere",
       vision_priorities: parsed.data.vision_priorities || null,
       office_hours: parsed.data.office_hours || "Kuwa Mbere – Kuwa Gatanu: 08:00 – 17:00",
-      social_media: parsed.data.social_media as any,
+      social_media: parsed.data.social_media as Record<string, string> | undefined,
       admin_dossier: parsed.data.admin_dossier || null,
     });
 
@@ -399,19 +412,31 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const gate = requireAdminWrite(req);
+  if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
+
   try {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
     if (!id) {
-      return NextResponse.json({ status: "error", message_kiny: "Shyiramo id y'umuyobozi" }, { status: 400 });
+      return NextResponse.json(
+        { status: "error", message_kiny: "Shyiramo id y'umuyobozi" },
+        { status: 400 }
+      );
     }
 
     const removed = deleteMockLeader(id);
     if (!removed) {
-      return NextResponse.json({ status: "error", message_kiny: "Umuyobozi ntabonetse" }, { status: 404 });
+      return NextResponse.json(
+        { status: "error", message_kiny: "Umuyobozi ntabonetse" },
+        { status: 404 }
+      );
     }
 
-    return NextResponse.json({ status: "success", message_kiny: "Umuyobozi yakuwemo neza." });
+    return NextResponse.json({
+      status: "success",
+      message_kiny: "Umuyobozi yakuwemo neza.",
+    });
   } catch (err) {
     console.error("[leaders DELETE] error:", err);
     return NextResponse.json(
