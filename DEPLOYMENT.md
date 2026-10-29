@@ -11,9 +11,9 @@ This guide is written for a non-technical operator. Follow every step in order.
 3. Choose an organisation, give the project a name (e.g. `iwacu-rwanda`), set a strong database password, and pick a region close to Rwanda (e.g. Frankfurt or Cape Town if available).
 4. Wait until the project status is **Active**.
 5. In the left sidebar open **Project Settings → API**.
-   - Copy the **Project URL** → this is `NEXT_PUBLIC_SUPABASE_URL`.
-   - Copy the **anon public** key → this is `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-   - Copy the **service_role** key (keep it secret) → this is `SUPABASE_SERVICE_ROLE_KEY`.
+   - Copy the **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`.
+   - Copy the **publishable key** (starts with `sb_publishable_`) → set it as `NEXT_PUBLIC_SUPABASE_ANON_KEY` for the current code.
+   - Copy the server-only **service_role** key from the Legacy API Keys tab → `SUPABASE_SERVICE_ROLE_KEY`. Never place it in a `NEXT_PUBLIC_*` variable, source code, or chat.
 
 ---
 
@@ -31,7 +31,9 @@ The script creates:
 - Tables: `boundaries`, `leaders`, `admin_profiles`, `audit_logs`
 - GiST indexes, RLS policies, views, and helper functions
 
-For an **existing** database, run `sql/security-hardening-migration.sql` after confirming the base schema is present. Do not rerun the entire base schema over an existing database.
+For a **fresh** database, apply these files in order: `sql/schema.sql`, `sql/security-hardening-migration.sql`, then `sql/security-hardening-followup-migration.sql`.
+
+For an **existing** database, confirm the base schema exists, then apply `sql/security-hardening-migration.sql` and the follow-up migration once each. Do not rerun either migration after it has been successfully applied. The follow-up migration moves RBAC helpers to a non-exposed schema and makes the safe leaders view use invoker permissions.
 
 ---
 
@@ -66,9 +68,9 @@ cp .env.example .env.local
 2. Open `.env.local` and fill in the values you copied from Supabase, plus a Groq key:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://xxxxxxxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
-SUPABASE_SERVICE_ROLE_KEY=eyJ...          # NEVER commit this
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_...
+SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-key  # NEVER commit this
 GROQ_API_KEY=gsk_...
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 NEXT_PUBLIC_DEFAULT_DISTRICT_SCOPE=RW-01
@@ -135,14 +137,30 @@ git push -u origin main
 ```
 
 3. Go to [https://vercel.com](https://vercel.com) → **Add New Project** → Import the GitHub repo.
-4. In the Vercel project settings → **Environment Variables**, add the same keys you used in `.env.local`:
+4. In the Vercel project settings → **Environment Variables**, add:
    - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (publishable key; safe to expose)
+   - `SUPABASE_SERVICE_ROLE_KEY` (server-only secret; never expose it)
    - `GROQ_API_KEY`
-   - `NEXT_PUBLIC_APP_URL` = `https://your-project.vercel.app`
+   - `NEXT_PUBLIC_APP_URL` = your deployed site URL
    - `NEXT_PUBLIC_DEFAULT_DISTRICT_SCOPE` = `RW-01`
-5. Click **Deploy**.
+5. Redeploy after adding or changing environment variables.
+
+For the security-hardening preview, configure these variables for the preview target and the branch `security/part-2-auth-hardening` first. Do not add the new database URL or key to production until the preview checks pass.
+
+### Database security note
+
+The current Supabase Security Advisor flags `public.spatial_ref_sys` because RLS is disabled on this PostGIS-managed table. It has not been changed automatically. If the deployment owner approves public read-only access to coordinate-system definitions, the proposed SQL is:
+
+```sql
+ALTER TABLE public.spatial_ref_sys ENABLE ROW LEVEL SECURITY;
+CREATE POLICY spatial_ref_sys_public_read_only
+  ON public.spatial_ref_sys
+  FOR SELECT TO anon, authenticated
+  USING (true);
+```
+
+Review the policy before running it. Do not enable RLS on this table without deciding which roles need read access.
 6. After the first deploy succeeds, open the site and test:
    - GPS locate
    - Admin login (magic link)
