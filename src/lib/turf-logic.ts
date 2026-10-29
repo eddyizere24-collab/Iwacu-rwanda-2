@@ -171,13 +171,6 @@ export function calculateConfidenceOffline(
   // Sort by confidence descending
   matches.sort((a, b) => b.confidence - a.confidence);
 
-  const maxConfidence = matches[0].confidence;
-  if (maxConfidence < MIN_CONFIDENCE) {
-    return createLocateError("CONFIDENCE_TOO_LOW", {
-      max_confidence: maxConfidence,
-    });
-  }
-
   // Normalise so percentages sum to ~100 when multiple overlaps
   const totalConf = matches.reduce((s, m) => s + m.confidence, 0);
   if (totalConf > 100 && matches.length > 1) {
