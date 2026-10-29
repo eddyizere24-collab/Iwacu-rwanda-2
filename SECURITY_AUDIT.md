@@ -22,8 +22,8 @@ Standard: NCSA Law No. 058/2021 + internal zero-PII policy
 ## 3. Row Level Security (RLS)
 
 - [x] RLS enabled on `boundaries`, `leaders`, `admin_profiles`, `audit_logs`.
-- [x] Anonymous users: SELECT only on currently valid boundaries and leaders.
-- [x] Admin writes restricted by `scope_code` prefix match (or `is_super_admin`).
+- [x] Browser roles cannot directly read base tables; public leader data is available through server APIs and the phone-free `v_active_leaders` view.
+- [x] Admin writes restricted by server-side auth/profile checks and hierarchical scope match (or `is_super_admin`).
 - [x] `audit_logs` readable only by super-admins; direct INSERT blocked.
 - [x] Service-role client used only on the server for geospatial RPCs and elevated admin operations.
 
