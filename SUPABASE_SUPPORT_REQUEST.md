@@ -1,45 +1,28 @@
-# Supabase Support Request — Move PostGIS out of public
+# Supabase Support Request Template — Existing PostGIS in public
 
-**Project ref:** `buexgewxypvkqmphvfec`  
-**Region:** `eu-central-1` (Frankfurt)  
-**PostGIS version:** `3.3.7`
+> **Current-project status (checked 2026-10-29): Do not send this request for IWACU RWANDA's current Supabase project.** Live SQL confirms PostGIS 3.3.7, `spatial_ref_sys`, and `ltree` are in the non-exposed `extensions` schema. Spatial smoke tests pass. This template is retained only for a separate project whose PostGIS extension is still installed in `public`.
+
+Replace the placeholders below only after confirming the target project's current extension schema and object dependencies. Do not paste this request unchanged for another project.
+
+---
+
+**Target project ref:** `<PROJECT_REF>`  
+**Region:** `<PROJECT_REGION>`  
+**PostGIS version:** `<POSTGIS_VERSION>`
 
 Hello Supabase Support,
 
-Please help move the existing PostGIS extension from the exposed `public` schema to the non-exposed `extensions` schema for this project, using your supported procedure for an existing database with PostGIS-dependent objects.
+For the project above, our read-only database checks confirm that PostGIS is still installed in the exposed `public` schema and that `public.spatial_ref_sys` is owned by a managed role that the project SQL role cannot administer.
 
-The project has PostGIS-dependent schema objects, including:
-- `public.boundaries.geom` with type `geometry(MultiPolygon, 4326)`
-- a generated area column that calls `ST_Area(...::geography)`
-- spatial indexes and application-owned functions that use PostGIS
-- the installed `postgis_topology` extension in the `topology` schema, which depends on PostGIS
+Please review the project's current extension and dependency state and, if supported, perform the safe in-place relocation of PostGIS to the non-exposed `extensions` schema using Supabase's approved operator procedure.
 
-The extension-owned table `public.spatial_ref_sys` is owned by `supabase_admin`. The project SQL role cannot change its grants or enable RLS. Supabase Security Advisor currently flags the table and PostGIS SECURITY DEFINER functions in `public`.
+Please preserve all existing geometry/geography columns, generated columns, indexes, views, triggers, application-owned functions, and any extensions that actually depend on PostGIS. Do not drop/recreate PostGIS with `CASCADE`, and do not instruct us to force RLS on an extension-owned `spatial_ref_sys` table if the project role lacks the required permissions.
 
-**Please do not drop/recreate PostGIS with CASCADE.** We need the existing dependent objects preserved and working. The app-owned spatial functions have been prepared to include `extensions` in their search path. `ltree` has already been moved into `extensions` by the project SQL role, and the schema placement and location-confidence routine were verified afterward. Please move PostGIS safely while preserving its dependent `postgis_topology` extension, spatial types/columns, indexes, views, and application-owned functions.
+Before closing the request, please confirm:
+1. The final schema of PostGIS and `spatial_ref_sys`.
+2. Whether any dependent extensions or objects required special handling.
+3. Whether any extension-owned function privileges remain exposed and the supported way to restrict them.
 
-After the change, we will verify the extension schema, run spatial-function smoke tests, and rerun Security Advisor.
-
-### Requested operator procedure (official Supabase-supported in-place move)
-
-The installed version is `3.3.7` and the available transition version `3.3.7next` is present. Our project role is `postgres`, not a superuser/member of `supabase_admin`; trying this procedure from the project role fails with permission denied on `pg_extension`. Please run the supported procedure as the appropriate managed operator:
-
-```sql
-BEGIN;
-UPDATE pg_extension
-   SET extrelocatable = true
- WHERE extname = 'postgis';
-
-ALTER EXTENSION postgis SET SCHEMA extensions;
-ALTER EXTENSION postgis UPDATE TO "3.3.7next";
-ALTER EXTENSION postgis UPDATE;
-
-UPDATE pg_extension
-   SET extrelocatable = false
- WHERE extname = 'postgis';
-COMMIT;
-```
-
-Please preserve the `postgis_topology` extension and all dependent objects. Once complete, we will verify the extension schema and rerun the location-confidence smoke test and Security Advisor.
+We will then verify the extension locations, run spatial-function smoke tests, and rerun Security Advisor.
 
 Thank you.
