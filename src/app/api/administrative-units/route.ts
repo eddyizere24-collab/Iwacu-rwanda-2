@@ -248,12 +248,6 @@ export async function GET(req: NextRequest) {
     if (!name || !code || seen.has(code)) continue;
     seen.add(code);
 
-    const provinceName = text(attrs.province);
-    const mappedKiny =
-      level === "province"
-        ? PROVINCE_KINY[text(attrs.province_id)] ?? provinceName
-        : name;
-
     const unitParent =
       level === "district" && !filter.parentCode
         ? "RW-P" + text(attrs.province_id)
@@ -261,7 +255,7 @@ export async function GET(req: NextRequest) {
 
     units.push({
       code,
-      name_kiny: mappedKiny,
+      name_kiny: name,
       name_eng: name,
       level,
       parent_code: unitParent || undefined,
