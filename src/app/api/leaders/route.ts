@@ -269,10 +269,21 @@ export async function PATCH(req: NextRequest) {
       )
       .single();
 
+    if (updateErr?.code === "PGRST116") {
+      return NextResponse.json(
+        {
+          status: "conflict",
+          message_kiny: "Amakuru yahindutse ahandi. Ongera ufungure uyu muyobozi mbere yo gukomeza.",
+        },
+        { status: 409 }
+      );
+    }
+
     if (updateErr || !updated) {
+      console.error("[leaders PATCH] database update failed:", updateErr?.message);
       return NextResponse.json(
         { status: "error", message_kiny: "Guhindura byanze. Ongera ugerageze." },
-        { status: 500 }
+        { status: 502 }
       );
     }
 
