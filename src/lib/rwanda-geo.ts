@@ -16,7 +16,7 @@ export interface EmergencyContact {
 }
 
 /**
- * 10 Verified National Emergency Numbers from D1 / Master Specification
+ * Rwanda emergency numbers cross-checked against official government and police pages on 2026-10-29.
  */
 export const VERIFIED_EMERGENCY_NUMBERS: EmergencyContact[] = [
   {
@@ -45,9 +45,17 @@ export const VERIFIED_EMERGENCY_NUMBERS: EmergencyContact[] = [
   },
   {
     number: "114",
-    name_kiny: "Ambulance — ubutabazi bw'ubuvuzi",
-    name_eng: "Medical ambulance",
-    source: "Rwanda Biomedical Centre (RBC)",
+    name_kiny: "Serivisi z'ubuzima",
+    name_eng: "Health services information",
+    source: "Government of Rwanda emergency numbers",
+    category: "medical",
+    is_verified: true,
+  },
+  {
+    number: "912",
+    name_kiny: "Ambulance / SAMU",
+    name_eng: "Ambulance / SAMU",
+    source: "Rwanda emergency services",
     category: "medical",
     is_verified: true,
   },
