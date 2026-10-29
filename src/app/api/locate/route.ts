@@ -8,9 +8,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createSupabaseServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
+import { createSupabasePublicClient, isSupabasePublicConfigured } from "@/lib/supabase/server";
 import { createLocateError } from "@/lib/utils/errors";
-import { maskPhone } from "@/lib/security/mask";
 import { locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
@@ -24,17 +23,6 @@ const LocateBodySchema = z.object({
   longitude: z.number().min(-180).max(180),
   accuracy: z.number().positive().max(50_000),
 });
-
-const MIN_CONFIDENCE = 5;
-const MAX_ACCURACY_M = 150;
-
-// Rough Rwanda bounding box (WGS84)
-const RWANDA_BBOX = {
-  minLng: 28.85,
-  minLat: -2.85,
-  maxLng: 30.9,
-  maxLat: -1.05,
-};
 
 interface RpcRow {
   scope_code: string;
@@ -60,6 +48,17 @@ export async function POST(
       );
     }
 
+    if (body && typeof body === "object" && (body as { mode?: unknown }).mode === "manual") {
+      const scopeCode = (body as { scope_code?: unknown }).scope_code;
+      if (typeof scopeCode !== "string" || !/^RW(?:-[0-9A-Z]+)*$/.test(scopeCode)) {
+        return NextResponse.json(createLocateError("NOT_FOUND"), { status: 400 });
+      }
+      if (!isSupabasePublicConfigured()) {
+        return NextResponse.json(createLocateError("DATABASE_ERROR"), { status: 503 });
+      }
+      return respondWithManualSelection(createSupabasePublicClient(), scopeCode);
+    }
+
     const parsed = LocateBodySchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
@@ -72,33 +71,13 @@ export async function POST(
 
     const { latitude, longitude, accuracy } = parsed.data;
 
-    // --- Error: GPS accuracy too low ---
-    if (accuracy > MAX_ACCURACY_M) {
-      return NextResponse.json(
-        createLocateError("GPS_ACCURACY_TOO_LOW", { accuracy }),
-        { status: 422 }
-      );
-    }
-
-    // --- Error: Outside Rwanda (cheap bbox check before hitting PostGIS) ---
-    if (
-      longitude < RWANDA_BBOX.minLng ||
-      longitude > RWANDA_BBOX.maxLng ||
-      latitude < RWANDA_BBOX.minLat ||
-      latitude > RWANDA_BBOX.maxLat
-    ) {
-      return NextResponse.json(createLocateError("OUTSIDE_RWANDA"), {
-        status: 422,
-      });
-    }
-
-    if (!isSupabaseConfigured()) {
+    if (!isSupabasePublicConfigured()) {
       // No database is configured: resolve against the official national NISR
       // village polygons rather than returning a fabricated sample village.
       return respondWithOfficialFallback(latitude, longitude, accuracy);
     }
 
-    const supabase = createSupabaseServiceClient();
+    const supabase = createSupabasePublicClient();
 
     // --- Call PostGIS confidence function ---
     const { data: rows, error: rpcError } = await supabase.rpc(
@@ -140,20 +119,9 @@ export async function POST(
       return respondWithOfficialFallback(latitude, longitude, accuracy);
     }
 
-    // Sort & normalise
+    // The SQL function returns top intersecting matches or nearest-village estimates.
     matches.sort((a, b) => b.confidence - a.confidence);
-
-    const maxConfidence = matches[0].confidence;
-
-    // --- Error: Confidence < 5 % ---
-    if (maxConfidence < MIN_CONFIDENCE) {
-      return NextResponse.json(
-        createLocateError("CONFIDENCE_TOO_LOW", {
-          max_confidence: maxConfidence,
-        }),
-        { status: 422 }
-      );
-    }
+    matches.splice(3);
 
     // Normalise overlapping percentages so they sum ≈ 100
     if (matches.length > 1) {
@@ -176,15 +144,19 @@ export async function POST(
     const scopeCodes = collectScopeCodes(hierarchy, matches);
     const leaders = await fetchLeadersMasked(supabase, scopeCodes);
 
+    const isNearestEstimate = matches[0].intersection_area_m2 === 0;
     const response: LocateSuccess = {
       status: "success",
       matches,
       hierarchy,
       leaders,
-      source: "gps",
+      source: isNearestEstimate ? "nearest" : "gps",
     };
 
-    if (isOverlap) {
+    if (isNearestEstimate) {
+      (response as LocateSuccess & { warning?: string }).warning =
+        "NEAREST_VILLAGE_ESTIMATE";
+    } else if (isOverlap) {
       (response as LocateSuccess & { warning?: string }).warning =
         "POINT_IN_OVERLAP";
     }
@@ -206,7 +178,7 @@ export async function POST(
 // ---------------------------------------------------------------------------
 
 async function buildHierarchy(
-  supabase: ReturnType<typeof createSupabaseServiceClient>,
+  supabase: ReturnType<typeof createSupabasePublicClient>,
   topVillage: ConfidenceMatch
 ): Promise<LocateSuccess["hierarchy"]> {
   const hierarchy: LocateSuccess["hierarchy"] = {
@@ -273,7 +245,7 @@ function collectScopeCodes(
 }
 
 async function fetchLeadersMasked(
-  supabase: ReturnType<typeof createSupabaseServiceClient>,
+  supabase: ReturnType<typeof createSupabasePublicClient>,
   scopeCodes: string[]
 ): Promise<LeaderPublic[]> {
   if (scopeCodes.length === 0) return [];
@@ -289,7 +261,6 @@ async function fetchLeadersMasked(
       role,
       email,
       photo_url,
-      phone_number,
       valid_from,
       valid_to,
       version,
@@ -326,7 +297,7 @@ async function fetchLeadersMasked(
       boundary_name_kiny: boundaries?.name_kiny ?? "",
       boundary_name_eng: boundaries?.name_eng ?? null,
       level: boundaries?.level ?? "",
-      phone_masked: maskPhone(row.phone_number as string | null),
+      phone_masked: null,
     };
   });
 }
@@ -355,4 +326,88 @@ async function respondWithOfficialFallback(
           ? 422
           : 400;
   return NextResponse.json(result, { status });
+}
+
+
+async function respondWithManualSelection(
+  supabase: ReturnType<typeof createSupabasePublicClient>,
+  scopeCode: string
+): Promise<NextResponse<LocateResponse>> {
+  const { data, error } = await supabase
+    .from("boundaries")
+    .select("scope_code, name_kiny, name_eng, level")
+    .eq("scope_code", scopeCode)
+    .eq("level", "village")
+    .is("valid_to", null)
+    .maybeSingle();
+  if (error || !data) {
+    return NextResponse.json(createLocateError("NOT_FOUND"), { status: 404 });
+  }
+  const selected: ConfidenceMatch = {
+    scope_code: data.scope_code,
+    name_kiny: data.name_kiny,
+    name_eng: data.name_eng,
+    level: "village",
+    confidence: 100,
+    intersection_area_m2: 0,
+  };
+  const hierarchy = await buildHierarchy(supabase, selected);
+  const response: LocateSuccess = {
+    status: "success",
+    matches: [selected],
+    hierarchy,
+    leaders: [],
+    source: "manual",
+    warning: "USER_CONFIRMED",
+  };
+  return NextResponse.json(response);
+}
+
+/** Search official village names, or browse the hierarchy from province to village. */
+export async function GET(req: NextRequest): Promise<NextResponse> {
+  try {
+    if (!isSupabasePublicConfigured()) {
+      return NextResponse.json({ status: "error", message: "Location data unavailable." }, { status: 503 });
+    }
+    const supabase = createSupabasePublicClient();
+    const params = new URL(req.url).searchParams;
+    const q = (params.get("q") ?? "").trim().replace(/[%,_()]/g, " ").slice(0, 80);
+    const parentScopeCode = (params.get("parent_scope_code") ?? "").trim();
+    const requestedLevel = (params.get("level") ?? "province").trim();
+    const allowed = ["province", "district", "sector", "cell", "village"] as const;
+    const level = allowed.includes(requestedLevel as (typeof allowed)[number]) ? requestedLevel : "province";
+
+    let query = supabase.from("boundaries")
+      .select("id, scope_code, name_kiny, name_eng, level, parent_id")
+      .is("valid_to", null);
+
+    if (q) {
+      query = query.eq("level", "village")
+        .ilike("name_kiny", `%${q}%`)
+        .order("name_kiny", { ascending: true })
+        .limit(30);
+    } else {
+      query = query.eq("level", level).order("name_kiny", { ascending: true })
+        .limit(level === "province" ? 10 : 120);
+      if (parentScopeCode) {
+        const { data: parent, error: parentError } = await supabase.from("boundaries")
+          .select("id").eq("scope_code", parentScopeCode).is("valid_to", null).maybeSingle();
+        if (parentError || !parent) return NextResponse.json({ status: "choices", choices: [] });
+        query = query.eq("parent_id", parent.id);
+      } else if (level !== "province") {
+        return NextResponse.json({ status: "choices", choices: [] });
+      }
+    }
+    const { data, error } = await query;
+    if (error) {
+      console.error("[locate] picker query failed:", error.message);
+      return NextResponse.json({ status: "error", message: "Location choices unavailable." }, { status: 503 });
+    }
+    return NextResponse.json({ status: "choices", choices: data ?? [] }, {
+      headers: { "Cache-Control": "public, max-age=30, stale-while-revalidate=120" },
+    });
+  } catch (error) {
+    console.error("[locate] picker error:", error);
+    return NextResponse.json({ status: "error", message: "Location choices unavailable." }, { status: 503 });
+  }
 }
