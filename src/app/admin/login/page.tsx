@@ -314,7 +314,8 @@ export default function AdminLoginPage() {
       }
 
       const profileScope = typeof profile.scope_code === "string" ? profile.scope_code : "";
-      const validScope = /^RW(?:-[0-9A-Z]{2,})*$/.test(profileScope);
+      const profileScopeDepth = profileScope === "RW" ? 0 : profileScope.split("-").length - 1;
+      const validScope = /^RW(?:-[0-9A-Z]{2,})*$/.test(profileScope) && profileScopeDepth <= 5;
       const mayUseRequestedScope =
         profile.is_super_admin === true ||
         code === profileScope ||
