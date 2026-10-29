@@ -236,14 +236,14 @@ LANGUAGE SQL
 STABLE
 SECURITY DEFINER
 SET search_path = ''
-AS $
+AS $adminfn$
   SELECT EXISTS (
     SELECT 1
     FROM public.admin_profiles AS ap
     WHERE ap.user_id = auth.uid()
       AND ap.is_super_admin IS TRUE
   );
-$;
+$adminfn$;
 
 CREATE OR REPLACE FUNCTION public.current_user_admin_scope()
 RETURNS TEXT
@@ -251,12 +251,12 @@ LANGUAGE SQL
 STABLE
 SECURITY DEFINER
 SET search_path = ''
-AS $
+AS $adminscope$
   SELECT ap.scope_code
   FROM public.admin_profiles AS ap
   WHERE ap.user_id = auth.uid()
   LIMIT 1;
-$;
+$adminscope$;
 
 REVOKE ALL ON FUNCTION public.is_current_user_super_admin() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.current_user_admin_scope() FROM PUBLIC, anon;
