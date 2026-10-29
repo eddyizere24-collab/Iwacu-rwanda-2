@@ -35,6 +35,18 @@ The read-only harness tested five representative village polygons in each of Rwa
 
 These are sampled, synthetic results—not tests of every village, actual phone GPS, indoor conditions, or offline first-time use. The 1,000-metre result is especially weak. The overlap/distance score is **not a calibrated probability**. The UI therefore labels it as an overlap score or an estimate, rather than promising that “92%” is the statistical chance of being correct. Further calibration with consented, privacy-safe confirmed locations is still needed.
 
+### Per-district spread
+For this same sample, results were also aggregated separately for each district (five sampled villages per district for each error level). This shows how much the averages can hide:
+
+| Simulated error | Mean district top-1 | Lowest–highest district top-1 | Mean district top-3 | Districts with 100% top-3 | Max no-candidate rate in any district |
+|---:|---:|---:|---:|---:|---:|
+| 20 m | 100.00% | 100–100% | 100.00% | 30/30 | 0.00% |
+| 100 m | 98.67% | 80–100% | 100.00% | 30/30 | 0.00% |
+| 300 m | 83.33% | 20–100% | 98.00% | 29/30 | 0.00% |
+| 1,000 m | 12.67% | 0–40% | 54.67% | 3/30 | 0.00% |
+
+At 300 m, the largest district-level gap between mean displayed score and observed top-1 hit rate was 42.87 percentage points; at 1,000 m it was 42.56 points. Five villages per district is a small diagnostic sample, so these numbers are useful for finding weak spots—not a full national certification.
+
 ### Lake Kivu / shoreline smoke test
 Representative coordinates were queried against the active boundary table. The sample positioned over the lake returned three nearest-village estimates even though it was outside the country polygon and outside all village polygons. Several shore samples landed inside one or more existing village polygons. These coordinates are diagnostic points, not surveyed reference points; they do not establish the correct legal village for all shoreline points.
 
