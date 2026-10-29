@@ -281,7 +281,7 @@ export default function HomePage() {
             )}
             {(data.source === "gps" || data.source === "offline") && (
               <p className="mb-4 text-[11px] text-muted-foreground">
-                Iki ni igipimo cy'ihurirana ry'uruziga rwa GPS n'imbibi, si amahirwe apimwe yo kuba umudugudu ari wo.
+                Iki ni igipimo cy'ihurirana ry'uruziga rwa GPS cyangwa ikimenyetso cyo ku ikarita n'imbibi; si amahirwe apimwe yo kuba umudugudu ari wo.
               </p>
             )}
 
@@ -369,7 +369,7 @@ export default function HomePage() {
                     >
                       <span className="font-semibold">{match.name_kiny}</span>
                       <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">
-                        {match.confidence >= 80 ? "Ihura cyane" : match.confidence >= 50 ? "Ishobora kuba hafi" : "Irasaba kugenzurwa"}
+                        {data.source === "nearest" ? "Igereranya — genzura" : match.confidence >= 80 ? "Ihurirana cyane n'imbibi" : match.confidence >= 50 ? "Irasaba kugenzurwa" : "Ntibisobanutse neza"}
                       </span>
                     </button>
                   ))}
