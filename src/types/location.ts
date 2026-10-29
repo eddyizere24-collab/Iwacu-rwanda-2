@@ -36,7 +36,7 @@ export interface LocateSuccess {
     district?: ConfidenceMatch;
   };
   leaders: LeaderPublic[];
-  source: "gps" | "ip" | "manual" | "offline";
+  source: "gps" | "ip" | "manual" | "offline" | "nearest";
   warning?: string;
 }
 
