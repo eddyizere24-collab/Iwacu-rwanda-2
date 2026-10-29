@@ -397,7 +397,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           name_kiny: row.name_kiny,
           name_eng: row.name_eng,
           level: row.level,
-          parent_scope_code: row.parent_id ? (codeById.get(row.parent_id) ?? null) : null,
+          parent_scope_code: row.level === "province" ? null : (row.parent_id ? (codeById.get(row.parent_id) ?? null) : null),
         }));
       return NextResponse.json({ status: "index", choices }, {
         headers: { "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800" },
