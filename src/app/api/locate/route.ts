@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createSupabasePublicClient, isSupabasePublicConfigured } from "@/lib/supabase/server";
 import { createLocateError } from "@/lib/utils/errors";
+import { rankVillageCandidates } from "@/lib/location-ranking";
 import { listOfficialNationalLocationIndex, locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
@@ -126,19 +127,7 @@ export async function POST(
     if (method === "gps" && matches.length > 1) {
       const ipPrior = await getIpDistrictPrior(req, supabase);
       if (ipPrior.size > 0) {
-        const totalGps = matches.reduce((sum, item) => sum + Math.max(item.confidence, 0), 0);
-        const ranked = matches.map((item) => {
-          const parts = item.scope_code.split("-");
-          const districtCode = parts.length >= 3 ? parts.slice(0, 3).join("-") : "";
-          const gpsShare = totalGps > 0 ? Math.max(item.confidence, 0) / totalGps : 0;
-          const ipShare = ipPrior.get(districtCode) ?? 0;
-          return {
-            item,
-            rankScore: (gpsShare * 0.85) + (ipShare * 0.15),
-          };
-        });
-        ranked.sort((a, b) => b.rankScore - a.rankScore);
-        matches = ranked.map((entry) => entry.item);
+        matches = rankVillageCandidates(matches, ipPrior);
       } else {
         matches.sort((a, b) => b.confidence - a.confidence);
       }
