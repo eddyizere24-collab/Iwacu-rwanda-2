@@ -205,13 +205,62 @@ export function useLocation() {
     abortRef.current = controller;
     setState({ ...INITIAL, status: "locating" });
     try {
-      const response = await fetch("/api/locate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "manual", scope_code: scopeCode }),
-        signal: controller.signal,
-      });
-      const json = (await response.json()) as LocateResponse;
+      let json: LocateResponse;
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        // Offline picker mode: use the cached national index, never a guessed name.
+        const indexResponse = await fetch("/api/locate?index=1", { signal: controller.signal });
+        if (!indexResponse.ok) throw new Error("offline_location_index_unavailable");
+        const indexPayload = await indexResponse.json();
+        const entries = Array.isArray(indexPayload.choices) ? indexPayload.choices as Array<{
+          scope_code: string;
+          name_kiny: string;
+          name_eng: string | null;
+          level: "province" | "district" | "sector" | "cell" | "village";
+          parent_scope_code: string | null;
+        }> : [];
+        const byCode = new Map(entries.map((entry) => [entry.scope_code, entry]));
+        let current = byCode.get(scopeCode);
+        if (!current || current.level !== "village") throw new Error("village_not_in_cached_index");
+
+        const hierarchy: LocateSuccess["hierarchy"] = {};
+        let villageMatch: ConfidenceMatch | null = null;
+        for (let depth = 0; current && depth < 6; depth += 1) {
+          const match: ConfidenceMatch = {
+            scope_code: current.scope_code,
+            name_kiny: current.name_kiny,
+            name_eng: current.name_eng,
+            level: current.level,
+            confidence: 100,
+            intersection_area_m2: 0,
+          };
+          if (current.level === "province") hierarchy.province = match;
+          if (current.level === "district") hierarchy.district = match;
+          if (current.level === "sector") hierarchy.sector = match;
+          if (current.level === "cell") hierarchy.cell = match;
+          if (current.level === "village") {
+            hierarchy.village = match;
+            villageMatch = match;
+          }
+          current = current.parent_scope_code ? byCode.get(current.parent_scope_code) : undefined;
+        }
+        if (!villageMatch) throw new Error("village_hierarchy_unavailable");
+        json = {
+          status: "success",
+          matches: [villageMatch],
+          hierarchy,
+          leaders: [],
+          source: "manual",
+          warning: "USER_CONFIRMED_OFFLINE",
+        };
+      } else {
+        const response = await fetch("/api/locate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "manual", scope_code: scopeCode }),
+          signal: controller.signal,
+        });
+        json = (await response.json()) as LocateResponse;
+      }
       if (json.status !== "success") {
         setState({
           ...INITIAL,
@@ -237,7 +286,7 @@ export function useLocation() {
         errorCode: null,
         errorMessageKiny: null,
         errorMessageEng: null,
-        isOffline: false,
+        isOffline: typeof navigator !== "undefined" && !navigator.onLine,
       });
     } catch {
       if (controller.signal.aborted) return;
