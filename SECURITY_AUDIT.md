@@ -14,6 +14,7 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - [x] Supabase URL, publishable key, preview URL, and default scope are configured for the `security/part-2-auth-hardening` preview branch.
 - [x] The real `SUPABASE_SERVICE_ROLE_KEY` value is retained only on `security/part-2-auth-hardening`. The two unrelated Preview branch variables were changed to `placeholder-disabled`; the Vercel environment list shows no Production-target variable for this key.
 - [x] Live Preview smoke tests passed via GitHub Actions: `GET /api/health` returned HTTP 200, unauthenticated `GET /api/leaders?scope_code=RW&reveal=true` returned HTTP 401, and unauthenticated `PATCH /api/leaders` returned HTTP 401.
+- [x] Inactive-number reports now use a durable `inactive_number_reports` table. Browser roles have no table grants and an explicit deny-all RLS policy; list/resolve routes require a verified Supabase Auth super-admin.
 - [ ] Create the first real Supabase Auth administrator and link the user to `admin_profiles` (the database currently has zero Auth users and zero admin profiles).
 - [ ] With a real admin account available, test valid/invalid login, logout, non-admin rejection, cross-scope access, and authorized raw-phone reveal.
 - [ ] Ask Supabase Support to move existing PostGIS into the non-exposed `extensions` schema using the approved in-place procedure in `SUPABASE_SUPPORT_REQUEST.md`. This project SQL role lacks permission to update `pg_extension`; verify spatial operations and rerun Security Advisor after Support completes the move.
@@ -36,7 +37,7 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 
 ## 4. Row Level Security and database permissions
 
-- [x] RLS enabled on boundaries, leaders, admin_profiles, and audit_logs.
+- [x] RLS enabled on boundaries, leaders, admin_profiles, audit_logs, and inactive_number_reports.
 - [x] Table reads and writes are limited by grants and row policies; admin profile reads are limited to self/super-admin.
 - [x] Scoped leader write policies compare a full scope code or a hyphen-delimited child scope, not a loose prefix.
 - [x] RBAC helper functions are in the non-exposed private schema with a fixed search path.
@@ -62,9 +63,9 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 
 ## 7. Residual Risks / Future Work
 
-- The new database is still empty: nationwide administrative boundaries and real leader records have not yet been imported. Those are later project stages.
+- The database still has no nationwide boundaries or real leader records. The inactive-number report table is created, but reports cannot be used from Production until the secure branch is released with its required Production environment variables.
 - Restrict the server-only key to the security preview, create a real admin user, and test authenticated admin routes.
 - Add rate limiting on public geospatial/AI routes before public launch.
 - Replace any placeholder offline village data with authoritative data before production use.
 
-**Status (2026-10-29):** TypeScript, security tests, production build, and live Preview smoke tests passed. The health endpoint returned HTTP 200; unauthenticated raw-phone reveal and admin writes returned HTTP 401. Concurrent-edit responses now return only safe leader fields and exclude raw phone data. The `ltree` extension is in `extensions`, and the location-confidence smoke test still passes. The real service-role value is limited to the security branch; unrelated Preview variables are disabled and no Production-target variable exists in the Vercel environment list. Part 2 remains blocked by two owner/support actions: create and link the first Auth super-admin, and have Supabase Support move PostGIS safely from `public` to `extensions`. Security Advisor continues to report the extension-owned PostGIS findings. The support request is prepared but not submitted.
+**Status (2026-10-29):** The inactive-number reports table and deny-all browser RLS policy are now applied to Supabase. The secure code branch now persists reports instead of returning mock-success responses. TypeScript, security tests, production build, and live Preview smoke tests passed for the prior security commit; checks for the new report changes are still running. The health endpoint returned HTTP 200; unauthenticated raw-phone reveal and admin writes returned HTTP 401. Concurrent-edit responses now return only safe leader fields and exclude raw phone data. The `ltree` extension is in `extensions`, and the location-confidence smoke test still passes. The real service-role value is limited to the security branch; unrelated Preview variables are disabled and no Production-target variable exists in the Vercel environment list. Part 2 remains blocked by two owner/support actions: create and link the first Auth super-admin, and have Supabase Support move PostGIS safely from `public` to `extensions`. Security Advisor continues to report the extension-owned PostGIS findings. The support request is prepared but not submitted.
