@@ -57,6 +57,10 @@ export async function requireAdminWrite(_req?: NextRequest): Promise<AdminGateRe
       console.error("[admin-gate] invalid admin scope configured for user");
       return denied(403, "Aho konti yawe yemerewe kugenzura ntabwo handitse neza.");
     }
+    if (scopeCode === "RW" && profile.is_super_admin !== true) {
+      console.error("[admin-gate] national scope requires a super-admin profile");
+      return denied(403, "Uburenganzira bw'igihugu cyose bugenewe umuyobozi mukuru wemewe gusa.");
+    }
 
     return {
       ok: true,
@@ -81,5 +85,8 @@ export function adminCanManageScope(admin: AdminIdentity, targetScope: string): 
   const targetDepth = targetScope === "RW" ? 0 : targetScope.split("-").length - 1;
   if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(targetScope) || targetDepth > 5) return false;
   if (admin.isSuperAdmin) return true;
+  // The root scope represents every descendant. Reserve it for super-admins;
+  // a regular profile with scope "RW" must never inherit nationwide access.
+  if (admin.scopeCode === "RW" || targetScope === "RW") return false;
   return targetScope === admin.scopeCode || targetScope.startsWith(`${admin.scopeCode}-`);
 }
