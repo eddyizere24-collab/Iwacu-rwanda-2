@@ -571,13 +571,13 @@ export default function AdminLoginPage() {
 
               <div>
                 <label htmlFor="admin-email" className="block text-xs font-semibold text-foreground mb-1">
-                  Email y&apos;Akazi (Official Gov Email):
+                  Email ya konti yawe:
                 </label>
                 <input
                   id="admin-email"
                   type="email"
                   required
-                  placeholder={`izina@${selectedTier}.gov.rw`}
+                  placeholder="email@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full min-h-[44px] rounded-xl border border-input bg-background px-3 py-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A3E0]"
@@ -586,7 +586,7 @@ export default function AdminLoginPage() {
 
               <div>
                 <label htmlFor="auth-code" className="block text-xs font-semibold text-foreground mb-1">
-                  Umubare w&apos;Ibanga / Kode y&apos;Icyemezo (Passcode):
+                  Ijambo ry&apos;ibanga rya konti:
                 </label>
                 <input
                   id="auth-code"
@@ -597,7 +597,7 @@ export default function AdminLoginPage() {
                   className="w-full min-h-[44px] rounded-xl border border-input bg-background px-3 py-2 text-xs text-foreground font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A3E0]"
                 />
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  (Muri iri gerageza, ushobora gukanda &quot;Injira Muri Sisitemu&quot; ako kanya)
+                  Koresha ijambo ry&apos;ibanga washyizweho kuri konti yawe.
                 </p>
               </div>
 
