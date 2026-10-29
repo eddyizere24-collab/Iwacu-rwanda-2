@@ -10,7 +10,7 @@
 -- Note: IF NOT EXISTS does not relocate PostGIS already installed in public.
 CREATE SCHEMA IF NOT EXISTS extensions;
 CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions;
-CREATE EXTENSION IF NOT EXISTS postgis_topology;
+-- postgis_topology is intentionally omitted; this application uses core PostGIS only.
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA extensions; -- Materialized path for hierarchy
