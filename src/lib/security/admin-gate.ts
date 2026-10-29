@@ -52,7 +52,8 @@ export async function requireAdminWrite(_req?: NextRequest): Promise<AdminGateRe
     }
 
     const scopeCode = typeof profile.scope_code === "string" ? profile.scope_code : "";
-    if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(scopeCode)) {
+    const scopeDepth = scopeCode === "RW" ? 0 : scopeCode.split("-").length - 1;
+    if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(scopeCode) || scopeDepth > 4) {
       console.error("[admin-gate] invalid admin scope configured for user");
       return denied(403, "Aho konti yawe yemerewe kugenzura ntabwo handitse neza.");
     }
