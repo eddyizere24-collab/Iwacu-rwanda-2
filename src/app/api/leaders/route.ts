@@ -3,7 +3,7 @@ import { z } from "zod";
 import { isSupabaseConfigured, createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getMockLeaders, toPublicLeader, addMockLeader, deleteMockLeader } from "@/lib/mock-data";
 import { maskPhone } from "@/lib/security/mask";
-import { requireAdminWrite } from "@/lib/security/admin-gate";
+import { adminCanManageScope, requireAdminWrite } from "@/lib/security/admin-gate";
 import type { LeaderPublic } from "@/types/leader";
 
 export const runtime = "nodejs";
@@ -39,10 +39,23 @@ export async function GET(req: NextRequest) {
     const scopeCode = searchParams.get("scope_code") || "RW";
     const reveal = searchParams.get("reveal") === "true";
 
+    if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(scopeCode)) {
+      return NextResponse.json(
+        { status: "error", message_kiny: "Kode y'aho ushaka ntabwo yemewe.", leaders: [] },
+        { status: 400 }
+      );
+    }
+
     if (reveal) {
-      const gate = requireAdminWrite(req);
+      const gate = await requireAdminWrite(req);
       if (!gate.ok) {
         return NextResponse.json(gate.body, { status: gate.status });
+      }
+      if (!adminCanManageScope(gate.admin, scopeCode)) {
+        return NextResponse.json(
+          { status: "error", message_kiny: "Nta burenganzira ufite bwo kubona nimero z'aho hantu." },
+          { status: 403 }
+        );
       }
     }
 
@@ -80,7 +93,7 @@ export async function GET(req: NextRequest) {
       .is("valid_to", null);
 
     if (scopeCode !== "RW") {
-      query = query.like("scope_code", `${scopeCode}%`);
+      query = query.or(`scope_code.eq.${scopeCode},scope_code.like.${scopeCode}-%`);
     }
 
     const { data, error } = await query;
@@ -137,7 +150,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const gate = requireAdminWrite(req);
+  const gate = await requireAdminWrite(req);
   if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
 
   try {
@@ -180,46 +193,10 @@ export async function PATCH(req: NextRequest) {
     } = parsed.data;
 
     if (!isSupabaseConfigured()) {
-      const mockList = getMockLeaders();
-      const existing = mockList.find((l) => l.id === id);
-
-      if (!existing) {
-        return NextResponse.json(
-          { status: "error", message_kiny: "Umuyobozi ntabwo abonetse" },
-          { status: 404 }
-        );
-      }
-
-      if (existing.version !== version) {
-        return NextResponse.json(
-          {
-            status: "conflict",
-            conflict: {
-              server_version: existing.version,
-              your_version: version,
-            },
-          },
-          { status: 409 }
-        );
-      }
-
-      existing.first_name = first_name;
-      existing.last_name = last_name;
-      existing.role = role;
-      if (phone_number !== undefined) existing.phone_number = phone_number;
-      if (whatsapp_number !== undefined) existing.whatsapp_number = whatsapp_number;
-      if (email !== undefined) existing.email = email;
-      if (photo_url !== undefined) existing.photo_url = photo_url;
-      if (vision_priorities !== undefined) existing.vision_priorities = vision_priorities;
-      if (office_hours !== undefined) existing.office_hours = office_hours;
-      if (social_media !== undefined) existing.social_media = social_media as Record<string, string>;
-      if (admin_dossier !== undefined) existing.admin_dossier = admin_dossier;
-      existing.version += 1;
-
-      return NextResponse.json({
-        status: "success",
-        leader: toPublicLeader(existing, true),
-      });
+      return NextResponse.json(
+        { status: "error", message_kiny: "Ububiko nyabwo ntibushyizweho. Guhindura amakuru byahagaritswe." },
+        { status: 503 }
+      );
     }
 
     const supabase = createSupabaseServiceClient();
@@ -234,6 +211,13 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json(
         { status: "error", message_kiny: "Umuyobozi ntabwo abonetse" },
         { status: 404 }
+      );
+    }
+
+    if (!adminCanManageScope(gate.admin, current.scope_code)) {
+      return NextResponse.json(
+        { status: "error", message_kiny: "Nta burenganzira ufite bwo guhindura amakuru y'uyu muyobozi." },
+        { status: 403 }
       );
     }
 
@@ -354,7 +338,7 @@ const CreateLeaderSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const gate = requireAdminWrite(req);
+  const gate = await requireAdminWrite(req);
   if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
 
   try {
@@ -367,41 +351,72 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (!adminCanManageScope(gate.admin, parsed.data.scope_code)) {
+      return NextResponse.json(
+        { status: "error", message_kiny: "Nta burenganzira ufite bwo gushyiraho umuyobozi muri aka gace." },
+        { status: 403 }
+      );
+    }
+
     if (!isSupabaseConfigured()) {
       return NextResponse.json(
-        {
-          status: "error",
-          message_kiny:
-            "Ububiko bw'amakuru ntiburashyirwaho. Ntihashobora gushyirwaho umuyobozi w'ukuri.",
-        },
+        { status: "error", message_kiny: "Ububiko nyabwo ntibushyizweho. Gushyiraho umuyobozi byahagaritswe." },
         { status: 503 }
       );
     }
 
-    const created = addMockLeader({
-      first_name: parsed.data.first_name,
-      last_name: parsed.data.last_name,
-      role: parsed.data.role,
-      phone_number: parsed.data.phone_number,
-      whatsapp_number: parsed.data.whatsapp_number || parsed.data.phone_number,
-      email: parsed.data.email || null,
-      photo_url: parsed.data.photo_url || null,
-      scope_code: parsed.data.scope_code,
-      boundary_name_kiny: parsed.data.boundary_name_kiny,
-      boundary_name_eng: parsed.data.boundary_name_eng || parsed.data.boundary_name_kiny,
-      level: parsed.data.level,
-      is_verified: parsed.data.is_verified ?? true,
-      verified_by: parsed.data.verified_by || "Urwego rw'Akarere",
-      vision_priorities: parsed.data.vision_priorities || null,
-      office_hours: parsed.data.office_hours || "Kuwa Mbere – Kuwa Gatanu: 08:00 – 17:00",
-      social_media: parsed.data.social_media as Record<string, string> | undefined,
-      admin_dossier: parsed.data.admin_dossier || null,
-    });
+    const supabase = createSupabaseServiceClient();
+    const { data: created, error: createError } = await supabase
+      .from("leaders")
+      .insert({
+        scope_code: parsed.data.scope_code,
+        first_name: parsed.data.first_name,
+        last_name: parsed.data.last_name,
+        role: parsed.data.role,
+        phone_number: parsed.data.phone_number,
+        email: parsed.data.email || null,
+        photo_url: parsed.data.photo_url || null,
+        created_by: gate.admin.userId,
+        updated_by: gate.admin.userId,
+      })
+      .select(`
+        id, scope_code, first_name, last_name, role, email, photo_url,
+        phone_number, valid_from, valid_to, version,
+        boundaries!inner ( name_kiny, name_eng, level )
+      `)
+      .single();
 
-    return NextResponse.json({
-      status: "success",
-      leader: toPublicLeader(created, true),
-    });
+    if (createError || !created) {
+      console.error("[leaders POST] database insert failed:", createError?.message);
+      return NextResponse.json(
+        { status: "error", message_kiny: "Ntibyashobotse kubika umuyobozi. Reba ko aho hantu kari muri ububiko." },
+        { status: 502 }
+      );
+    }
+
+    const rawBoundary = created.boundaries;
+    const boundary = (Array.isArray(rawBoundary) ? rawBoundary[0] : rawBoundary) as {
+      name_kiny: string; name_eng: string | null; level: string;
+    } | null;
+
+    const leader: LeaderPublic = {
+      id: created.id,
+      scope_code: created.scope_code,
+      first_name: created.first_name,
+      last_name: created.last_name,
+      role: created.role,
+      email: created.email,
+      photo_url: created.photo_url,
+      valid_from: created.valid_from,
+      valid_to: created.valid_to,
+      version: created.version,
+      boundary_name_kiny: boundary?.name_kiny ?? "",
+      boundary_name_eng: boundary?.name_eng ?? null,
+      level: boundary?.level ?? "",
+      phone_masked: maskPhone(created.phone_number),
+    };
+
+    return NextResponse.json({ status: "success", leader }, { status: 201 });
   } catch (err) {
     console.error("[leaders POST] error:", err);
     return NextResponse.json(
@@ -412,7 +427,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const gate = requireAdminWrite(req);
+  const gate = await requireAdminWrite(req);
   if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
 
   try {
@@ -425,17 +440,58 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    const removed = deleteMockLeader(id);
-    if (!removed) {
+    if (!isSupabaseConfigured()) {
       return NextResponse.json(
-        { status: "error", message_kiny: "Umuyobozi ntabonetse" },
+        { status: "error", message_kiny: "Ububiko nyabwo ntibushyizweho. Gukuraho umuyobozi byahagaritswe." },
+        { status: 503 }
+      );
+    }
+
+    const supabase = createSupabaseServiceClient();
+    const { data: current, error: fetchError } = await supabase
+      .from("leaders")
+      .select("id, scope_code, valid_to")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (fetchError || !current) {
+      return NextResponse.json(
+        { status: "error", message_kiny: "Umuyobozi ntabonetse." },
         { status: 404 }
+      );
+    }
+
+    if (!adminCanManageScope(gate.admin, current.scope_code)) {
+      return NextResponse.json(
+        { status: "error", message_kiny: "Nta burenganzira ufite bwo gukuraho uyu muyobozi." },
+        { status: 403 }
+      );
+    }
+
+    if (current.valid_to) {
+      return NextResponse.json(
+        { status: "error", message_kiny: "Uyu muyobozi yamaze guhagarikwa." },
+        { status: 409 }
+      );
+    }
+
+    const { error: updateError } = await supabase
+      .from("leaders")
+      .update({ valid_to: new Date().toISOString(), updated_by: gate.admin.userId })
+      .eq("id", id)
+      .is("valid_to", null);
+
+    if (updateError) {
+      console.error("[leaders DELETE] database update failed:", updateError.message);
+      return NextResponse.json(
+        { status: "error", message_kiny: "Ntibyashobotse guhagarika umuyobozi." },
+        { status: 502 }
       );
     }
 
     return NextResponse.json({
       status: "success",
-      message_kiny: "Umuyobozi yakuwemo neza.",
+      message_kiny: "Umuyobozi yahagaritswe neza.",
     });
   } catch (err) {
     console.error("[leaders DELETE] error:", err);
