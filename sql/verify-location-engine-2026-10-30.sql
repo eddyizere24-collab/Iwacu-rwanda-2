@@ -49,10 +49,15 @@ predictions AS (
       (array_agg(result.scope_code ORDER BY result.confidence DESC))[1] AS top1_scope_code,
       array_agg(result.scope_code ORDER BY result.confidence DESC) AS candidate_scope_codes,
       (array_agg(result.confidence ORDER BY result.confidence DESC))[1] AS top1_score
-    FROM public.calculate_location_confidence(
-      ST_X(t.point_geom),
-      ST_Y(t.point_geom),
-      t.noise_m
+    FROM (
+      SELECT result.scope_code, result.confidence
+      FROM public.calculate_location_confidence(
+        ST_X(t.point_geom),
+        ST_Y(t.point_geom),
+        t.noise_m
+      ) AS result
+      ORDER BY result.confidence DESC
+      LIMIT 3
     ) AS result
   ) AS p ON TRUE
 )
@@ -72,10 +77,11 @@ FROM predictions
 GROUP BY district_scope, noise_m
 ORDER BY district_scope, noise_m;
 
--- Gap/border diagnostic:
--- Finds points inside the national country polygon but not covered by any active
--- village polygon. This includes true boundary gaps and may include lake/shore
--- cells if they are represented that way in the official dataset.
+-- Gap/border diagnostic for the database polygon coverage.
+-- The RPC deliberately retains its original contract and returns no candidate
+-- when no real village polygon intersects. The Next.js API uses the official
+-- NISR nearest-village fallback in that case; verify that fallback via Preview HTTP,
+-- not from this SQL-only harness.
 WITH country AS (
   SELECT geom
   FROM public.boundaries
@@ -84,7 +90,7 @@ WITH country AS (
 ),
 grid AS (
   SELECT
-    ST_MakePoint(28.9 + (i % 100) * 0.02, -2.8 + ((i * 37) % 85) * 0.02) AS point_geom,
+    ST_SetSRID(ST_MakePoint(28.9 + (i % 100) * 0.02, -2.8 + ((i * 37) % 85) * 0.02), 4326) AS point_geom,
     i
   FROM generate_series(1, 1000) AS n(i)
 ),
@@ -100,26 +106,10 @@ gaps AS (
         AND v.geom IS NOT NULL
         AND ST_Covers(v.geom, g.point_geom)
     )
-  ORDER BY g.i
-  LIMIT 50
-),
-gap_predictions AS (
-  SELECT
-    g.i,
-    p.scope_code AS candidate_scope_code,
-    p.confidence,
-    p.intersection_area_m2
-  FROM gaps AS g
-  LEFT JOIN LATERAL public.calculate_location_confidence(
-    ST_X(g.point_geom), ST_Y(g.point_geom), 100
-  ) AS p ON TRUE
 )
 SELECT
-  COUNT(DISTINCT i) AS gap_points_tested,
-  COUNT(DISTINCT i) FILTER (WHERE candidate_scope_code IS NOT NULL) AS points_with_candidate,
-  COUNT(DISTINCT i) FILTER (WHERE candidate_scope_code IS NULL) AS points_without_candidate,
-  COUNT(DISTINCT i) FILTER (WHERE candidate_scope_code IS NOT NULL AND intersection_area_m2 = 0) AS points_using_nearest_fallback
-FROM gap_predictions;
+  COUNT(*) AS points_inside_country_without_village_polygon
+FROM gaps;
 
 -- Explicit Lake Kivu / border probes. Coordinates are representative test points,
 -- not authoritative surveyed shoreline marks. A location with no containing
