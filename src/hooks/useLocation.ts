@@ -215,17 +215,45 @@ export function useLocation() {
     try {
       let json: LocateResponse;
       if (typeof navigator !== "undefined" && !navigator.onLine) {
-        // Offline picker mode: use the cached national index, never a guessed name.
-        const indexResponse = await fetch("/api/locate?index=1", { signal: controller.signal });
-        if (!indexResponse.ok) throw new Error("offline_location_index_unavailable");
-        const indexPayload = await indexResponse.json();
-        const entries = Array.isArray(indexPayload.choices) ? indexPayload.choices as Array<{
+        // Offline picker mode: read the bundled/cached static index first.
+        // Its compact tuple rows avoid unnecessary download bytes on mobile.
+        let indexPayload: { choices?: unknown[] };
+        try {
+          const staticResponse = await fetch("/offline/location-index.json", {
+            signal: controller.signal,
+            cache: "force-cache",
+          });
+          if (!staticResponse.ok) throw new Error("static_location_index_unavailable");
+          indexPayload = await staticResponse.json() as { choices?: unknown[] };
+        } catch {
+          // Older app shells may only have the cached API index.
+          const indexResponse = await fetch("/api/locate?index=1", { signal: controller.signal });
+          if (!indexResponse.ok) throw new Error("offline_location_index_unavailable");
+          indexPayload = await indexResponse.json() as { choices?: unknown[] };
+        }
+        const rawEntries = Array.isArray(indexPayload.choices) ? indexPayload.choices : [];
+        type CachedChoice = {
           scope_code: string;
           name_kiny: string;
           name_eng: string | null;
           level: "province" | "district" | "sector" | "cell" | "village";
           parent_scope_code: string | null;
-        }> : [];
+        };
+        const entries = rawEntries.flatMap((raw): CachedChoice[] => {
+          if (Array.isArray(raw) && raw.length >= 5) {
+            return [{
+              scope_code: String(raw[0]),
+              name_kiny: String(raw[1]),
+              name_eng: raw[2] == null ? null : String(raw[2]),
+              level: String(raw[3]) as CachedChoice["level"],
+              parent_scope_code: raw[4] == null ? null : String(raw[4]),
+            }];
+          }
+          if (raw && typeof raw === "object") {
+            return [raw as CachedChoice];
+          }
+          return [];
+        });
         const byCode = new Map(entries.map((entry) => [entry.scope_code, entry]));
         let current = byCode.get(scopeCode);
         if (!current || current.level !== "village") throw new Error("village_not_in_cached_index");
