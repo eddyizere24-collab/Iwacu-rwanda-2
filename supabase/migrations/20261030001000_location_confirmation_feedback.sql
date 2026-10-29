@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS public.location_confirmation_feedback (
 ALTER TABLE public.location_confirmation_feedback ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON TABLE public.location_confirmation_feedback FROM PUBLIC, anon, authenticated, service_role;
 GRANT INSERT ON TABLE public.location_confirmation_feedback TO service_role;
+CREATE POLICY location_confirmation_feedback_deny_browser_access
+  ON public.location_confirmation_feedback
+  FOR ALL TO anon, authenticated
+  USING (false)
+  WITH CHECK (false);
 
 COMMENT ON TABLE public.location_confirmation_feedback IS
   'Optional consent-based anonymous location-quality feedback. Contains no user identifier, contact detail, full IP, or precise coordinates; coordinates are rounded to two decimal places by the server.';
