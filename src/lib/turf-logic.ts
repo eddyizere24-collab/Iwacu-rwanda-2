@@ -37,8 +37,6 @@ export type OfflineBoundaryCollection = FeatureCollection<
   OfflineBoundaryProperties
 >;
 
-const MIN_CONFIDENCE = 5;
-const MAX_ACCURACY_M = 150;
 const RWANDA_BBOX: [number, number, number, number] = [28.85, -2.85, 30.90, -1.05]; // rough
 
 /**
@@ -99,10 +97,6 @@ export function calculateConfidenceOffline(
     return createLocateError("GPS_DENIED");
   }
 
-  if (accuracy > MAX_ACCURACY_M) {
-    return createLocateError("GPS_ACCURACY_TOO_LOW", { accuracy });
-  }
-
   // Rough Rwanda check
   const [minLng, minLat, maxLng, maxLat] = RWANDA_BBOX;
   if (
@@ -148,14 +142,30 @@ export function calculateConfidenceOffline(
   }
 
   if (matches.length === 0) {
-    // Check if point is inside any polygon at all (gap detection)
-    const insideAny = boundaries.features.some((f) =>
-      turf.booleanPointInPolygon(point, f)
-    );
-    if (!insideAny) {
-      return createLocateError("POINT_IN_GAP");
-    }
-    return createLocateError("CONFIDENCE_TOO_LOW");
+    // For gaps in polygons, rank genuine village features by distance to their
+    // centroid. This is an estimate, not a calibrated GPS probability.
+    const nearest = boundaries.features
+      .filter((feature) => feature.properties.level === "village")
+      .map((feature) => ({
+        feature,
+        distance: turf.distance(point, turf.centroid(feature), { units: "meters" }),
+      }))
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 3);
+    const withinRwanda = nearest.filter((item) => item.distance <= 50_000);
+    if (withinRwanda.length === 0) return createLocateError("OUTSIDE_RWANDA");
+    const weights = withinRwanda.map((item) => Math.exp(-item.distance / Math.max(250, accuracy)));
+    const total = weights.reduce((sum, value) => sum + value, 0);
+    withinRwanda.forEach((item, index) => {
+      matches.push({
+        scope_code: item.feature.properties.scope_code,
+        name_kiny: item.feature.properties.name_kiny,
+        name_eng: item.feature.properties.name_eng,
+        level: "village",
+        confidence: Math.round((weights[index] / total) * 10000) / 100,
+        intersection_area_m2: 0,
+      });
+    });
   }
 
   // Sort by confidence descending
@@ -230,9 +240,10 @@ export function calculateConfidenceOffline(
 
   return {
     status: "success",
-    matches,
+    matches: matches.slice(0, 3),
     hierarchy,
     leaders: [], // Offline mode is read-only for boundaries; leaders require network
-    source: "offline",
+    source: matches[0].intersection_area_m2 > 0 ? "offline" : "nearest",
+    warning: matches[0].intersection_area_m2 > 0 ? undefined : "OFFLINE_NEAREST_ESTIMATE",
   };
 }
