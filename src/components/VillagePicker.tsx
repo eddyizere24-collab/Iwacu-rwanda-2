@@ -29,21 +29,55 @@ const LABEL: Record<BoundaryLevel, string> = {
 };
 let indexPromise: Promise<Choice[]> | null = null;
 
+function decodeLocationIndex(payload: unknown): Choice[] {
+  if (!payload || typeof payload !== "object") throw new Error("index_invalid");
+  const data = payload as { status?: unknown; choices?: unknown };
+  if (!Array.isArray(data.choices)) throw new Error("index_invalid");
+
+  // The shipped offline file stores rows as compact arrays to save mobile data;
+  // the online fallback API returns objects for compatibility.
+  const choices = data.choices.map((row): Choice => {
+    if (Array.isArray(row) && row.length >= 5) {
+      return {
+        scope_code: String(row[0]),
+        name_kiny: String(row[1]),
+        name_eng: row[2] == null ? null : String(row[2]),
+        level: row[3] as BoundaryLevel,
+        parent_scope_code: row[4] == null ? null : String(row[4]),
+      };
+    }
+    if (row && typeof row === "object") return row as Choice;
+    throw new Error("index_row_invalid");
+  });
+
+  const allowed = new Set<BoundaryLevel>(["province", "district", "sector", "cell", "village"]);
+  if (choices.some((choice) => !allowed.has(choice.level) || !choice.scope_code || !choice.name_kiny)) {
+    throw new Error("index_row_invalid");
+  }
+  return choices;
+}
+
 async function fetchLocationIndex(): Promise<Choice[]> {
   if (!indexPromise) {
-    indexPromise = fetch("/api/locate?index=1")
-      .then(async (response) => {
-        if (!response.ok) throw new Error("index_unavailable");
-        const payload = await response.json();
-        if (payload.status !== "index" || !Array.isArray(payload.choices)) {
-          throw new Error("index_invalid");
+    indexPromise = (async () => {
+      // Shipped compact index is available offline even before a user has made
+      // a successful location request. The API remains a freshness fallback.
+      try {
+        const staticResponse = await fetch("/offline/location-index.json", { cache: "force-cache" });
+        if (staticResponse.ok) {
+          return decodeLocationIndex(await staticResponse.json());
         }
-        return payload.choices as Choice[];
-      })
-      .catch((error) => {
-        indexPromise = null;
-        throw error;
-      });
+      } catch {
+        // Try the online index below.
+      }
+
+      const response = await fetch("/api/locate?index=1", { cache: "no-store" });
+      if (!response.ok) throw new Error("index_unavailable");
+      return decodeLocationIndex(await response.json());
+    })().catch((error) => {
+      indexPromise = null;
+      throw error;
+    });
   }
   return indexPromise;
 }
