@@ -327,7 +327,7 @@ function getBestPosition(timeoutMs: number): Promise<GeolocationPosition> {
         resolve(best);
         return;
       }
-      if (lastError?.code === lastError.PERMISSION_DENIED && !best) {
+      if (lastError && lastError.code === lastError.PERMISSION_DENIED && !best) {
         reject(lastError);
         return;
       }
