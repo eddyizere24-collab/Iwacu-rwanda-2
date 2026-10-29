@@ -92,7 +92,7 @@ export async function POST(
 
     if (rpcError) {
       console.warn("[locate] PostGIS RPC failed; trying the official NISR boundary service:", rpcError.message);
-      return respondWithOfficialFallback(latitude, longitude, accuracy);
+      return respondWithOfficialFallback(latitude, longitude, accuracy, method);
     }
 
     // Ignore an old sample polygon if it remains in a database that has
@@ -117,7 +117,7 @@ export async function POST(
     if (matches.length === 0) {
       // A valid national match may still exist when the database has not yet
       // been imported or contains only partial district coverage.
-      return respondWithOfficialFallback(latitude, longitude, accuracy);
+      return respondWithOfficialFallback(latitude, longitude, accuracy, method);
     }
 
     // Keep raw overlap scores intact; they are geometric overlap scores, not
