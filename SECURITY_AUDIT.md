@@ -30,6 +30,7 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - [x] maskPhone() is used on public API responses.
 - [x] v_active_leaders excludes raw phone numbers and uses invoker permissions/RLS.
 - [x] Public/authenticated browser roles do not have SELECT permission on leaders.phone_number.
+- [x] Concurrent-edit (409) responses return only safe leader fields and never include the raw phone number.
 - [x] The frontend shows masked numbers; the real tel: action follows explicit user interaction.
 - [x] ?reveal=true requires a verified administrator and an allowed scope.
 
@@ -66,4 +67,4 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - Add rate limiting on public geospatial/AI routes before public launch.
 - Replace any placeholder offline village data with authoritative data before production use.
 
-**Status (2026-10-29):** TypeScript, security tests, production build, and live Preview smoke tests passed for the security branch. The live endpoint returned HTTP 200, while unauthenticated raw-phone reveal and admin writes both returned HTTP 401. The `ltree` extension was moved to `extensions`, and the location-confidence smoke test still passes. The real service-role value is limited to the security branch; unrelated preview variables were disabled and there is no Production-target variable in the Vercel environment list. Part 2 is not complete: no real Auth super-admin exists, and Supabase Support still needs to move PostGIS safely from `public` to `extensions`; Security Advisor continues to report the extension-owned PostGIS findings. The support request is prepared with the exact supported SQL, but has not been submitted.
+**Status (2026-10-29):** TypeScript, security tests, production build, and live Preview smoke tests passed. The health endpoint returned HTTP 200; unauthenticated raw-phone reveal and admin writes returned HTTP 401. Concurrent-edit responses now return only safe leader fields and exclude raw phone data. The `ltree` extension is in `extensions`, and the location-confidence smoke test still passes. The real service-role value is limited to the security branch; unrelated Preview variables are disabled and no Production-target variable exists in the Vercel environment list. Part 2 remains blocked by two owner/support actions: create and link the first Auth super-admin, and have Supabase Support move PostGIS safely from `public` to `extensions`. Security Advisor continues to report the extension-owned PostGIS findings. The support request is prepared but not submitted.
