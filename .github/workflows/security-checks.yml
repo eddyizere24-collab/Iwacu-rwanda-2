@@ -46,3 +46,44 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+  preview-smoke:
+    name: Preview API smoke tests
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/security/part-2-auth-hardening'
+    steps:
+      - name: Wait for current security Preview health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://iwacu-rwanda-2-git-security-part-2-auth-hardening-ahabona.vercel.app/api/health"
+          status="000"
+          for attempt in $(seq 1 24); do
+            status="$(curl --silent --show-error --output /tmp/health.json --write-out '%{http_code}' "$url" || true)"
+            if [ "$status" = "200" ]; then
+              break
+            fi
+            sleep 5
+          done
+          cat /tmp/health.json
+          test "$status" = "200" || { echo "Health endpoint returned HTTP $status"; exit 1; }
+
+      - name: Confirm raw-phone reveal rejects unauthenticated requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://iwacu-rwanda-2-git-security-part-2-auth-hardening-ahabona.vercel.app/api/leaders?scope_code=RW&reveal=true"
+          status="$(curl --silent --show-error --output /tmp/reveal.json --write-out '%{http_code}' "$url" || true)"
+          cat /tmp/reveal.json
+          test "$status" = "401" || { echo "Unauthenticated reveal returned HTTP $status, expected 401"; exit 1; }
+
+      - name: Confirm admin writes reject unauthenticated requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://iwacu-rwanda-2-git-security-part-2-auth-hardening-ahabona.vercel.app/api/leaders"
+          status="$(curl --silent --show-error --request PATCH --header 'content-type: application/json' --data '{}' --output /tmp/admin.json --write-out '%{http_code}' "$url" || true)"
+          cat /tmp/admin.json
+          test "$status" = "401" || { echo "Unauthenticated PATCH returned HTTP $status, expected 401"; exit 1; }
