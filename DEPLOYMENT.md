@@ -77,7 +77,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 NEXT_PUBLIC_DEFAULT_DISTRICT_SCOPE=RW-01
 ```
 
-3. Get a free Groq API key at [https://console.groq.com](https://console.groq.com).
+3. `GROQ_API_KEY` is not needed by the current `/api/ai-router` implementation, which performs deterministic NISR lookup. Add it only if a future, reviewed change actually connects Groq.
 
 ---
 
