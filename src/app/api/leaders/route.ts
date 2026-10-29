@@ -226,7 +226,7 @@ export async function PATCH(req: NextRequest) {
 
     const { data: current, error: fetchErr } = await supabase
       .from("leaders")
-      .select("*")
+      .select("id, scope_code, first_name, last_name, role, email, photo_url, valid_from, valid_to, version")
       .eq("id", id)
       .single();
 
@@ -244,7 +244,18 @@ export async function PATCH(req: NextRequest) {
           conflict: {
             server_version: current.version,
             your_version: version,
-            server_data: current,
+            server_data: {
+              id: current.id,
+              scope_code: current.scope_code,
+              first_name: current.first_name,
+              last_name: current.last_name,
+              role: current.role,
+              email: current.email,
+              photo_url: current.photo_url,
+              valid_from: current.valid_from,
+              valid_to: current.valid_to,
+              version: current.version,
+            },
           },
         },
         { status: 409 }
