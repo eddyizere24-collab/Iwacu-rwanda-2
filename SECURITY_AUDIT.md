@@ -45,7 +45,7 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - [x] App-owned PostGIS routines were updated to include `extensions` in their fixed search path; the location-confidence function was smoke-tested against the empty database and returned successfully.
 - [ ] Existing database: PostGIS is installed in `public` (non-relocatable) and owns `public.spatial_ref_sys`; RLS is disabled and browser-role write grants remain. The connected SQL role is not the owner and cannot fix these directly. Do not attempt to force RLS or drop PostGIS with `CASCADE`. Supported remediation for a database with PostGIS columns: request that Supabase Support move PostGIS to the non-exposed `extensions` schema, then test spatial queries and rerun Security Advisor.
 - [ ] Security Advisor's `st_estimatedextent` SECURITY DEFINER warnings are extension-managed PostGIS functions in `public`. A `REVOKE EXECUTE` attempt did not change their ACLs because the objects are owned by `supabase_admin`; the application does not call these RPCs. Moving PostGIS into `extensions` is the supported remediation for this existing project.
-- [ ] The existing `ltree` extension is also in `public`. Fresh installs now place PostGIS and ltree in `extensions`, and app-owned spatial RPCs include `extensions` in their search path. Existing extension movement remains a managed-owner/support task.
+- [x] The relocatable `ltree` extension was moved from `public` to `extensions` on 2026-10-29. The extension schema was verified and `calculate_location_confidence(30.06, -1.95, 20)` completed successfully afterward. PostGIS remains in `public` and still requires the supported Supabase Support move.
 
 ## 5. Optimistic Locking
 
