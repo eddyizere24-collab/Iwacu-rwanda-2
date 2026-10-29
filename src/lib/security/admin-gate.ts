@@ -77,7 +77,8 @@ export async function requireAdminWrite(_req?: NextRequest): Promise<AdminGateRe
  * RW-01 must not be treated as the parent of RW-010.
  */
 export function adminCanManageScope(admin: AdminIdentity, targetScope: string): boolean {
-  if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(targetScope)) return false;
+  const targetDepth = targetScope === "RW" ? 0 : targetScope.split("-").length - 1;
+  if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(targetScope) || targetDepth > 4) return false;
   if (admin.isSuperAdmin) return true;
   return targetScope === admin.scopeCode || targetScope.startsWith(`${admin.scopeCode}-`);
 }
