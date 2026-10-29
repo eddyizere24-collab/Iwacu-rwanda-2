@@ -673,7 +673,10 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
 
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT SELECT ON boundaries TO anon, authenticated;
-GRANT SELECT ON leaders TO anon, authenticated;
+-- The API uses the server-only service role to mask raw phone numbers.
+-- Never grant direct table reads to browser-facing roles: RLS alone would
+-- still allow them to select phone_number from leaders.
+REVOKE SELECT ON leaders FROM anon, authenticated;
 GRANT SELECT ON v_active_leaders TO anon, authenticated;
 GRANT SELECT ON admin_profiles TO authenticated;
 GRANT SELECT ON audit_logs TO authenticated;
