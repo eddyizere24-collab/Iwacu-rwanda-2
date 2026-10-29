@@ -176,6 +176,64 @@ export async function listOfficialNationalLocationIndex(): Promise<OfficialNatio
   );
 }
 
+export async function getOfficialVillagePolygonsForBbox(
+  west: number,
+  south: number,
+  east: number,
+  north: number
+): Promise<{ type: "FeatureCollection"; features: Array<Record<string, unknown>> }> {
+  if (
+    ![west, south, east, north].every(Number.isFinite) ||
+    west < 28.7 || east > 31.1 || south < -3.0 || north > -0.8 ||
+    west >= east || south >= north || (east - west) > 1.0 || (north - south) > 1.0
+  ) {
+    throw new Error("Map view bounds are outside the allowed Rwanda map window.");
+  }
+
+  const params = new URLSearchParams({
+    where: "1=1",
+    geometry: JSON.stringify({
+      xmin: west,
+      ymin: south,
+      xmax: east,
+      ymax: north,
+      spatialReference: { wkid: 4326 },
+    }),
+    geometryType: "esriGeometryEnvelope",
+    spatialRel: "esriSpatialRelIntersects",
+    inSR: "4326",
+    outSR: "4326",
+    outFields: "province,district,sector,cell,village",
+    returnGeometry: "true",
+    resultRecordCount: "500",
+    f: "geojson",
+  });
+
+  const response = await fetch(NISR_QUERY_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+    body: params.toString(),
+    cache: "no-store",
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) {
+    throw new Error(`Official map boundary lookup returned HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    type?: string;
+    features?: Array<Record<string, unknown>>;
+    error?: { message?: string };
+  };
+  if (!Array.isArray(payload.features)) {
+    throw new Error(payload.error?.message ?? "Official boundary response had no features.");
+  }
+  return {
+    type: "FeatureCollection",
+    features: payload.features.slice(0, 500),
+  };
+}
+
 function calculateIntersection(
   boundary: BoundaryFeature,
   accuracyCircle: Feature<Polygon>
