@@ -15,7 +15,7 @@ The project has PostGIS-dependent schema objects, including:
 
 The extension-owned table `public.spatial_ref_sys` is owned by `supabase_admin`. The project SQL role cannot change its grants or enable RLS. Supabase Security Advisor currently flags the table and PostGIS SECURITY DEFINER functions in `public`.
 
-**Please do not drop/recreate PostGIS with CASCADE.** We need the existing dependent objects preserved and working. The app-owned spatial functions have been prepared to include `extensions` in their search path. Please let us know when the move is complete and whether `ltree` can safely be moved to `extensions` as well.
+**Please do not drop/recreate PostGIS with CASCADE.** We need the existing dependent objects preserved and working. The app-owned spatial functions have been prepared to include `extensions` in their search path. `ltree` has already been moved into `extensions` by the project SQL role, and the schema placement and location-confidence routine were verified afterward. Please move only the existing PostGIS extension as outlined above.
 
 After the change, we will verify the extension schema, run spatial-function smoke tests, and rerun Security Advisor.
 
