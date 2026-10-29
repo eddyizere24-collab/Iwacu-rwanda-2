@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { RwandanSun } from "@/components/RwandanSun";
 import type { AdministrativeUnit } from "@/lib/rwanda-geo";
+import { createSupabaseBrowserClient, isSupabaseBrowserConfigured } from "@/lib/supabase/client";
 
 export type AdminTier = "national" | "province" | "district" | "sector" | "cell";
 
@@ -275,27 +276,72 @@ export default function AdminLoginPage() {
   async function handleFinalLogin(e: React.FormEvent) {
     e.preventDefault();
     setErrorMsg(null);
-    setLoading(true);
 
-    const { code, name } = getScopeDetails();
-
-    // Store verified session state in localStorage for scoped dashboard enforcement
-    const adminSession = {
-      tier: selectedTier,
-      scope_code: code,
-      scope_name: name,
-      email: email.trim() || `admin@${selectedTier}.gov.rw`,
-      loginTime: new Date().toISOString(),
-    };
-
-    if (typeof window !== "undefined") {
-      localStorage.setItem("iwacu_admin_session", JSON.stringify(adminSession));
+    if (!isSupabaseBrowserConfigured()) {
+      setErrorMsg("Kwinjira ntibirashyirwaho neza. Supabase Auth igomba kubanza gushyirwa muri Vercel.");
+      return;
+    }
+    if (!email.trim() || !authCode) {
+      setErrorMsg("Andika email n'ijambo ry'ibanga byahawe konti yawe.");
+      return;
     }
 
-    setTimeout(() => {
-      setLoading(false);
+    setLoading(true);
+    const { code, name } = getScopeDetails();
+
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: authCode,
+      });
+
+      if (authError || !authData.user) {
+        setErrorMsg("Email cyangwa ijambo ry'ibanga si byo, cyangwa konti ntishobora kwinjira.");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("admin_profiles")
+        .select("user_id, full_name, scope_code, is_super_admin")
+        .eq("user_id", authData.user.id)
+        .maybeSingle();
+
+      if (profileError || !profile) {
+        await supabase.auth.signOut();
+        setErrorMsg("Konti yinjiye ariko nta burenganzira bw'ubuyobozi yahawe. Baza umuyobozi mukuru.");
+        return;
+      }
+
+      const profileScope = typeof profile.scope_code === "string" ? profile.scope_code : "";
+      const validScope = /^RW(?:-[0-9A-Z]{2,})*$/.test(profileScope);
+      const mayUseRequestedScope =
+        profile.is_super_admin === true ||
+        code === profileScope ||
+        (profileScope !== "RW" && code.startsWith(profileScope + "-"));
+
+      if (!validScope || !mayUseRequestedScope || !code) {
+        await supabase.auth.signOut();
+        setErrorMsg("Aho wahisemo ntihari mu bubasha bwahawe konti yawe.");
+        return;
+      }
+
+      // This is only a display preference. Every API request verifies the
+      // signed-in Supabase user and authoritative admin_profiles row again.
+      localStorage.setItem("iwacu_admin_session", JSON.stringify({
+        tier: selectedTier,
+        scope_code: code,
+        scope_name: name,
+        email: authData.user.email || email.trim(),
+        loginTime: new Date().toISOString(),
+      }));
       router.push("/admin/dashboard");
-    }, 600);
+    } catch (error) {
+      console.error("[admin login] failed:", error);
+      setErrorMsg("Ntibyashobotse kwemeza konti yawe. Ongera ugerageze.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   const scopeInfo = getScopeDetails();
