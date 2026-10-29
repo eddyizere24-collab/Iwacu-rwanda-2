@@ -16,7 +16,7 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - [ ] Remove `SUPABASE_SERVICE_ROLE_KEY` from Production and the two unrelated Preview branches so it is restricted to the security preview until release approval.
 - [ ] Create the first real Supabase Auth administrator and link the user to `admin_profiles` (the database currently has zero Auth users and zero admin profiles).
 - [ ] Test login, logout, wrong password, non-admin user, cross-scope access, and raw-phone reveal against the configured preview deployment. The connected Vercel integration currently denies deployment access, so the preview health endpoint could not be checked from here.
-- [ ] Resolve the remaining Supabase Security Advisor finding for `public.spatial_ref_sys` with a supported, owner-authorized policy/grant change before declaring the database security review clean.
+- [ ] Request Supabase Support to move existing PostGIS (and, if possible, ltree) to the non-exposed `extensions` schema; verify spatial operations and rerun Security Advisor before declaring this database review clean.
 
 ## 2. Zero PII to LLM (Groq)
 
@@ -42,9 +42,9 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - [x] set_updated_at() has a fixed search_path.
 - [x] `audit_logs` is readable only by super-admins and direct inserts are denied.
 - [x] `v_active_leaders` now has SELECT-only privileges for browser roles; the database check confirmed anonymous INSERT/UPDATE/DELETE are false for that view.
-- [ ] `public.spatial_ref_sys` remains a critical unresolved issue: RLS is disabled, and verification still reports INSERT/UPDATE/DELETE privileges for `anon` and `authenticated`. A migration-level revoke attempt did not change these privileges because the relation is owned by `supabase_admin`, not the connected database role. Do not claim this is fixed; resolve it through a supported owner-authorized change and an explicit policy decision.
-- [ ] Supabase Security Advisor still reports extension-managed PostGIS `st_estimatedextent` SECURITY DEFINER overloads in `public`; this application does not call those RPCs. The current role cannot manage the extension-owned grants, so these remain a separate platform-level hardening item.
-- [ ] Supabase Security Advisor reports that PostGIS and ltree extensions live in public; moving extension schemas needs a separate compatibility review.
+- [ ] Existing database: PostGIS is installed in `public` (non-relocatable) and owns `public.spatial_ref_sys`; RLS is disabled and browser-role write grants remain. The connected SQL role is not the owner and cannot fix these directly. Do not attempt to force RLS or drop PostGIS with `CASCADE`. Supported remediation for a database with PostGIS columns: request that Supabase Support move PostGIS to the non-exposed `extensions` schema, then test spatial queries and rerun Security Advisor.
+- [ ] Security Advisor's `st_estimatedextent` SECURITY DEFINER warnings are extension-managed PostGIS functions in `public`. The application does not call these RPCs; moving PostGIS into `extensions` is the supported remediation for this existing project.
+- [ ] The existing `ltree` extension is also in `public`. Fresh installs now place PostGIS and ltree in `extensions`, and app-owned spatial RPCs include `extensions` in their search path. Existing extension movement remains a managed-owner/support task.
 
 ## 5. Optimistic Locking
 
