@@ -218,7 +218,10 @@ export async function locateFromOfficialNationalBoundaries(
   longitude: number,
   accuracyMeters: number
 ): Promise<LocateResponse> {
-  const circle = turf.circle([longitude, latitude], accuracyMeters / 1000, {
+  const safeAccuracyMeters = Number.isFinite(accuracyMeters)
+    ? Math.min(Math.max(accuracyMeters, 1), 50_000)
+    : 100;
+  const circle = turf.circle([longitude, latitude], safeAccuracyMeters / 1000, {
     steps: 48,
     units: "kilometers",
   });
@@ -290,7 +293,7 @@ export async function locateFromOfficialNationalBoundaries(
 
   const circleArea = turf.area(circle);
   if (!(circleArea > 0)) {
-    return createLocateError("GPS_ACCURACY_TOO_LOW", { accuracy: accuracyMeters });
+    return createLocateError("GPS_ACCURACY_TOO_LOW", { accuracy: safeAccuracyMeters });
   }
 
   const rawMatches: Array<{
@@ -381,7 +384,7 @@ export async function locateFromOfficialNationalBoundaries(
           nearby.sort((a, b) => a.distanceMeters - b.distanceMeters);
           const selected = nearby.slice(0, 3);
           const weights = selected.map((item) =>
-            Math.exp(-item.distanceMeters / Math.max(250, accuracyMeters))
+            Math.exp(-item.distanceMeters / Math.max(250, safeAccuracyMeters))
           );
           const totalWeight = weights.reduce((sum, value) => sum + value, 0);
 
