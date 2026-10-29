@@ -33,7 +33,6 @@ const INITIAL: UseLocationState = {
   isOffline: false,
 };
 
-const MAX_ACCURACY_M = 150;
 const GPS_TIMEOUT_MS = 15_000;
 
 export function useLocation() {
@@ -76,23 +75,10 @@ export function useLocation() {
     const isOnline = typeof navigator.onLine === "boolean" ? navigator.onLine : true;
 
     try {
-      const position = await getCurrentPosition(GPS_TIMEOUT_MS);
+      const position = await getBestPosition(GPS_TIMEOUT_MS);
       if (controller.signal.aborted) return;
 
       const { latitude, longitude, accuracy } = position.coords;
-
-      if (accuracy > MAX_ACCURACY_M) {
-        setState({
-          ...INITIAL,
-          status: "error",
-          errorCode: "GPS_ACCURACY_TOO_LOW",
-          errorMessageKiny:
-            "GPS ntabwo iri ku buryo bwiza (accuracy > 150m). Gerageza hanze cyangwa shakisha manuelle.",
-          errorMessageEng:
-            "GPS accuracy is too low (> 150 m). Try outdoors or use manual search.",
-        });
-        return;
-      }
 
       setState((s) => ({ ...s, status: "locating" }));
 
@@ -213,20 +199,118 @@ export function useLocation() {
     }
   }, []);
 
-  return { ...state, locate, reset };
+  const chooseVillage = useCallback(async (scopeCode: string) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setState({ ...INITIAL, status: "locating" });
+    try {
+      const response = await fetch("/api/locate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "manual", scope_code: scopeCode }),
+        signal: controller.signal,
+      });
+      const json = (await response.json()) as LocateResponse;
+      if (json.status !== "success") {
+        setState({
+          ...INITIAL,
+          status: "error",
+          errorCode: json.code,
+          errorMessageKiny: json.message_kiny,
+          errorMessageEng: json.message_eng,
+        });
+        return;
+      }
+      try {
+        localStorage.setItem("iwacu-confirmed-village", JSON.stringify({
+          scope_code: scopeCode,
+          name_kiny: json.matches[0]?.name_kiny ?? "",
+          confirmed_at: new Date().toISOString(),
+        }));
+      } catch {
+        // The location selection still works if storage is disabled.
+      }
+      setState({
+        status: "success",
+        data: json,
+        errorCode: null,
+        errorMessageKiny: null,
+        errorMessageEng: null,
+        isOffline: false,
+      });
+    } catch {
+      if (controller.signal.aborted) return;
+      setState({
+        ...INITIAL,
+        status: "error",
+        errorCode: "NETWORK_ERROR",
+        errorMessageKiny: "Interineti irimo ikibazo. Gerageza guhitamo umudugudu uri ku rutonde.",
+        errorMessageEng: "Network error. Choose a village from the list.",
+      });
+    }
+  }, []);
+
+  return { ...state, locate, reset, chooseVillage };
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getCurrentPosition(timeoutMs: number): Promise<GeolocationPosition> {
+function getBestPosition(timeoutMs: number): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: timeoutMs,
-      maximumAge: 0,
-    });
+    let best: GeolocationPosition | null = null;
+    let lastError: GeolocationPositionError | null = null;
+    let settled = false;
+    let watchId: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      if (best) {
+        resolve(best);
+        return;
+      }
+      if (lastError?.code === lastError.PERMISSION_DENIED) {
+        reject(lastError);
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: false,
+        timeout: 5_000,
+        maximumAge: 300_000,
+      });
+    };
+
+    timer = setTimeout(finish, Math.min(timeoutMs, 10_000));
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          if (!best || position.coords.accuracy < best.coords.accuracy) best = position;
+          if (position.coords.accuracy <= 35) finish();
+        },
+        (error) => {
+          lastError = error;
+          if (error.code === error.PERMISSION_DENIED) finish();
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: timeoutMs,
+          maximumAge: 10_000,
+        }
+      );
+    } catch {
+      if (timer) clearTimeout(timer);
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: false,
+        timeout: 5_000,
+        maximumAge: 300_000,
+      });
+    }
   });
 }
 
