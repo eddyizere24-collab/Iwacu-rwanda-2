@@ -443,6 +443,19 @@ export default function AdminDashboardPage() {
   const verifiedCount = leaders.filter((l) => l.is_verified).length;
   const pendingReportsCount = reports.filter((r) => r.status === "pending").length;
 
+  // Do not render the administration interface until the real Auth session and
+  // authoritative admin profile have been verified successfully.
+  if (!authReady) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div role="status" aria-live="polite" className="rounded-2xl border border-border bg-card px-6 py-5 text-center shadow-sm">
+          <RwandanSun size={40} glow={false} />
+          <p className="mt-3 text-sm font-semibold text-foreground">Turimo kugenzura uburenganzira bwawe…</p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Top Banner with Rwandan National Colors */}
