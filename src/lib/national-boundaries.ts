@@ -79,34 +79,40 @@ export type OfficialNationalIndexChoice = {
  * not a replacement for the more complete populated Supabase index.
  */
 export async function listOfficialNationalLocationIndex(): Promise<OfficialNationalIndexChoice[]> {
-  const params = new URLSearchParams({
-    where: "1=1",
-    outFields: "province_id,province,district_id,district,sector_id,sector,cell_id,cell,village_id,village",
-    returnGeometry: "false",
-    resultRecordCount: "16000",
-    resultOffset: "0",
-    orderByFields: "village_id",
-    f: "json",
-  });
+  const pageSize = 2000;
+  const offsets = Array.from({ length: 8 }, (_, index) => index * pageSize);
+  const pages = await Promise.all(offsets.map(async (offset) => {
+    const params = new URLSearchParams({
+      where: "1=1",
+      outFields: "province_id,province,district_id,district,sector_id,sector,cell_id,cell,village_id,village",
+      returnGeometry: "false",
+      resultRecordCount: String(pageSize),
+      resultOffset: String(offset),
+      orderByFields: "village_id",
+      f: "json",
+    });
 
-  const response = await fetch(NISR_QUERY_URL, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
-    body: params.toString(),
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) {
-    throw new Error(`NISR location index returned HTTP ${response.status}`);
-  }
+    const response = await fetch(NISR_QUERY_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+      body: params.toString(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) {
+      throw new Error(`NISR location index page ${offset} returned HTTP ${response.status}`);
+    }
 
-  const payload = (await response.json()) as {
-    features?: Array<{ attributes?: Record<string, unknown>; properties?: Record<string, unknown> }>;
-    error?: { message?: string };
-  };
-  if (!Array.isArray(payload.features)) {
-    throw new Error(payload.error?.message ?? "NISR location index response had no features");
-  }
+    const payload = (await response.json()) as {
+      features?: Array<{ attributes?: Record<string, unknown>; properties?: Record<string, unknown> }>;
+      error?: { message?: string };
+    };
+    if (!Array.isArray(payload.features)) {
+      throw new Error(payload.error?.message ?? `NISR location index page ${offset} had no features`);
+    }
+    return payload.features;
+  }));
+  const features = pages.flat();
 
   const index = new Map<string, OfficialNationalIndexChoice>();
   const add = (
@@ -136,7 +142,7 @@ export async function listOfficialNationalLocationIndex(): Promise<OfficialNatio
     "eastern province": "Intara y'Iburasirazuba",
   };
 
-  for (const feature of payload.features) {
+  for (const feature of features) {
     const props = feature.attributes ?? feature.properties;
     if (!props) continue;
     const codes = scopeCodes(props);
