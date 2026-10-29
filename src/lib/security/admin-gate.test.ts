@@ -34,6 +34,17 @@ describe("adminCanManageScope", () => {
     assert.equal(adminCanManageScope(districtAdmin, ""), false);
   });
 
+  it("rejects a national-scope profile unless it is a super-admin", () => {
+    const misconfiguredNationalAdmin: AdminIdentity = {
+      userId: "misconfigured-national-admin",
+      scopeCode: "RW",
+      isSuperAdmin: false,
+    };
+    assert.equal(adminCanManageScope(misconfiguredNationalAdmin, "RW"), false);
+    assert.equal(adminCanManageScope(misconfiguredNationalAdmin, "RW-01"), false);
+    assert.equal(adminCanManageScope(misconfiguredNationalAdmin, "RW-01-01-02"), false);
+  });
+
   it("allows a super-admin to manage all valid administrative scopes", () => {
     const superAdmin: AdminIdentity = {
       userId: "super-admin-id",
