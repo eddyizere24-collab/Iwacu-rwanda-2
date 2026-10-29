@@ -22,6 +22,14 @@ CREATE INDEX IF NOT EXISTS idx_inactive_number_reports_status_created
 CREATE INDEX IF NOT EXISTS idx_inactive_number_reports_leader
   ON public.inactive_number_reports (leader_id);
 ALTER TABLE public.inactive_number_reports ENABLE ROW LEVEL SECURITY;
+-- Defense in depth: browser roles must never read or write citizen reports directly.
+CREATE POLICY inactive_number_reports_deny_browser_access
+  ON public.inactive_number_reports
+  FOR ALL
+  TO anon, authenticated
+  USING (false)
+  WITH CHECK (false);
+
 REVOKE ALL ON TABLE public.inactive_number_reports FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.inactive_number_reports TO service_role;
 GRANT ALL ON TABLE public.inactive_number_reports TO postgres;
