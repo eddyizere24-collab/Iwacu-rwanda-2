@@ -40,7 +40,7 @@ const GPS_TIMEOUT_MS = 15_000;
 export function useLocation() {
   const [state, setState] = useState<UseLocationState>(INITIAL);
   const abortRef = useRef<AbortController | null>(null);
-  const lastFixRef = useRef<{ latitude: number; longitude: number; accuracy: number; method: FeedbackMethod } | null>(null);
+  const lastFixRef = useRef<{ latitude: number; longitude: number; accuracy: number; method: FeedbackMethod; recordedAt: number } | null>(null);
   const feedbackMethodRef = useRef<FeedbackMethod>("manual");
 
   const reset = useCallback(() => {
@@ -84,7 +84,7 @@ export function useLocation() {
 
       const { latitude, longitude, accuracy } = position.coords;
       const fixMethod: FeedbackMethod = isOnline ? "gps" : "offline";
-      lastFixRef.current = { latitude, longitude, accuracy, method: fixMethod };
+      lastFixRef.current = { latitude, longitude, accuracy, method: fixMethod, recordedAt: Date.now() };
       feedbackMethodRef.current = fixMethod;
 
       setState((s) => ({ ...s, status: "locating" }));
@@ -207,7 +207,7 @@ export function useLocation() {
   }, []);
 
   const chooseVillage = useCallback(async (scopeCode: string, selectionMethod: FeedbackMethod = "manual") => {
-    feedbackMethodRef.current = selectionMethod;
+    feedbackMethodRef.current = typeof navigator !== "undefined" && !navigator.onLine && selectionMethod === "manual" ? "offline" : selectionMethod;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -316,7 +316,7 @@ export function useLocation() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    lastFixRef.current = { latitude, longitude, accuracy, method: "map" };
+    lastFixRef.current = { latitude, longitude, accuracy, method: "map", recordedAt: Date.now() };
     feedbackMethodRef.current = "map";
     setState({ ...INITIAL, status: "locating" });
 
@@ -371,8 +371,12 @@ export function useLocation() {
 
   const submitLocationFeedback = useCallback(async (scopeCode: string): Promise<void> => {
     const method = feedbackMethodRef.current;
-    const fix = method !== "manual" && lastFixRef.current?.method === method
-      ? lastFixRef.current
+    const candidateFix = lastFixRef.current;
+    const fixIsRecent = candidateFix && Date.now() - candidateFix.recordedAt <= 30 * 60 * 1000;
+    const fix = method !== "manual" &&
+      fixIsRecent &&
+      (method !== "offline" || candidateFix?.method === "offline")
+      ? candidateFix
       : null;
     const response = await fetch("/api/location-feedback", {
       method: "POST",
