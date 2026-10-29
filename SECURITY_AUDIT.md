@@ -11,11 +11,12 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - [x] Database schema and security migrations have been applied to the newly created Supabase project; RLS on boundaries, leaders, admin_profiles, and audit_logs was verified.
 - [x] Follow-up migration makes v_active_leaders a security-invoker view and relocates RBAC helper functions to a non-exposed private schema.
 - [x] Browser roles cannot read the leaders.phone_number column; only explicit, non-sensitive leader and boundary columns are granted.
-- [x] Vercel environment variables for Supabase URL, publishable key, preview URL, and default scope are configured for the security/part-2-auth-hardening preview branch only.
-- [ ] Add the server-only SUPABASE_SERVICE_ROLE_KEY to that Vercel preview environment. Never commit it or place it in a NEXT_PUBLIC_* variable.
-- [ ] Create the first real Supabase Auth administrator and link the user to admin_profiles.
-- [ ] Test login, logout, wrong password, non-admin user, cross-scope access, and raw-phone reveal against the configured preview deployment.
-- [ ] Resolve the remaining Supabase Security Advisor finding for public.spatial_ref_sys using an explicit RLS policy decision before declaring the database security review clean.
+- [x] Supabase URL, publishable key, preview URL, and default scope are configured for the `security/part-2-auth-hardening` preview branch.
+- [x] `SUPABASE_SERVICE_ROLE_KEY` is present in that preview target according to the Vercel environment-variable screen; its runtime/database connectivity is not yet verified.
+- [ ] Remove `SUPABASE_SERVICE_ROLE_KEY` from Production and the two unrelated Preview branches so it is restricted to the security preview until release approval.
+- [ ] Create the first real Supabase Auth administrator and link the user to `admin_profiles` (the database currently has zero Auth users and zero admin profiles).
+- [ ] Test login, logout, wrong password, non-admin user, cross-scope access, and raw-phone reveal against the configured preview deployment. The connected Vercel integration currently denies deployment access, so the preview health endpoint could not be checked from here.
+- [ ] Resolve the remaining Supabase Security Advisor finding for `public.spatial_ref_sys` with a supported, owner-authorized policy/grant change before declaring the database security review clean.
 
 ## 2. Zero PII to LLM (Groq)
 
@@ -39,9 +40,10 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - [x] Scoped leader write policies compare a full scope code or a hyphen-delimited child scope, not a loose prefix.
 - [x] RBAC helper functions are in the non-exposed private schema with a fixed search path.
 - [x] set_updated_at() has a fixed search_path.
-- [x] audit_logs is readable only by super-admins and direct inserts are denied.
-- [ ] public.spatial_ref_sys still has RLS disabled. Supabase Security Advisor marks this as a critical issue. Do not enable RLS without first selecting an explicit policy; the proposed read-only public policy is documented in the deployment notes.
-- [ ] Supabase Security Advisor still reports extension-managed PostGIS st_estimatedextent SECURITY DEFINER overloads in public; this application does not call those RPCs. The current database role cannot revoke the extension owner's grants, so these remain a separate platform-level hardening item.
+- [x] `audit_logs` is readable only by super-admins and direct inserts are denied.
+- [x] `v_active_leaders` now has SELECT-only privileges for browser roles; the database check confirmed anonymous INSERT/UPDATE/DELETE are false for that view.
+- [ ] `public.spatial_ref_sys` remains a critical unresolved issue: RLS is disabled, and verification still reports INSERT/UPDATE/DELETE privileges for `anon` and `authenticated`. A migration-level revoke attempt did not change these privileges because the relation is owned by `supabase_admin`, not the connected database role. Do not claim this is fixed; resolve it through a supported owner-authorized change and an explicit policy decision.
+- [ ] Supabase Security Advisor still reports extension-managed PostGIS `st_estimatedextent` SECURITY DEFINER overloads in `public`; this application does not call those RPCs. The current role cannot manage the extension-owned grants, so these remain a separate platform-level hardening item.
 - [ ] Supabase Security Advisor reports that PostGIS and ltree extensions live in public; moving extension schemas needs a separate compatibility review.
 
 ## 5. Optimistic Locking
@@ -59,8 +61,8 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 ## 7. Residual Risks / Future Work
 
 - The new database is still empty: nationwide administrative boundaries and real leader records have not yet been imported. Those are later project stages.
-- Add the server-only key and a real admin user before testing authenticated admin routes.
+- Restrict the server-only key to the security preview, create a real admin user, and test authenticated admin routes.
 - Add rate limiting on public geospatial/AI routes before public launch.
 - Replace any placeholder offline village data with authoritative data before production use.
 
-**Status:** The code hardening and database migrations are in place, but Part 2 is not fully verified against the running preview until the server-only key and admin account are configured and the remaining spatial_ref_sys policy decision is resolved.
+**Status:** The application hardening branch and database migrations are in place; the Vercel build check for commit `8e61c6c` passed. Part 2 is not complete: no Auth administrator exists, the preview runtime could not be reached through the connected Vercel integration, the service-role secret is duplicated across environments, and the extension-owned `spatial_ref_sys` grants/RLS finding remains critical.
