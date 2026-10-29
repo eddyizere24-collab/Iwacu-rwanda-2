@@ -377,7 +377,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       const starts = Array.from({ length: 18 }, (_, index) => index * pageSize);
       const pageResults = await Promise.all(starts.map(async (start) => {
         const result = await supabase.from("boundaries")
-          .select("id, scope_code, name_kiny, name_eng, level, parent_id")
+          .select("scope_code, name_kiny, name_eng, level")
           .is("valid_to", null)
           .order("scope_code", { ascending: true })
           .range(start, start + pageSize - 1);
@@ -389,7 +389,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         return NextResponse.json({ status: "error", message: "Location index unavailable." }, { status: 503 });
       }
       const rows = pageResults.flatMap((page) => page.data ?? []);
-      const codeById = new Map(rows.map((row) => [row.id, row.scope_code]));
       const choices = rows
         .filter((row) => row.level !== "country")
         .map((row) => ({
@@ -397,7 +396,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           name_kiny: row.name_kiny,
           name_eng: row.name_eng,
           level: row.level,
-          parent_scope_code: row.level === "province" ? null : (row.parent_id ? (codeById.get(row.parent_id) ?? null) : null),
+          // Official scope codes are hierarchical; no private UUID fields needed.
+          parent_scope_code: row.level === "province" ? null : row.scope_code.split("-").slice(0, -1).join("-"),
         }));
       return NextResponse.json({ status: "index", choices }, {
         headers: { "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800" },
@@ -411,7 +411,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const level = allowed.includes(requestedLevel as (typeof allowed)[number]) ? requestedLevel : "province";
 
     let query = supabase.from("boundaries")
-      .select("id, scope_code, name_kiny, name_eng, level, parent_id")
+      .select("scope_code, name_kiny, name_eng, level")
       .is("valid_to", null);
 
     if (q) {
@@ -423,10 +423,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       query = query.eq("level", level).order("name_kiny", { ascending: true })
         .limit(level === "province" ? 10 : 120);
       if (parentScopeCode) {
-        const { data: parent, error: parentError } = await supabase.from("boundaries")
-          .select("id").eq("scope_code", parentScopeCode).is("valid_to", null).maybeSingle();
-        if (parentError || !parent) return NextResponse.json({ status: "choices", choices: [] });
-        query = query.eq("parent_id", parent.id);
+        if (!/^RW(?:-[0-9A-Z]+)*$/.test(parentScopeCode)) {
+          return NextResponse.json({ status: "choices", choices: [] });
+        }
+        query = query.like("scope_code", `${parentScopeCode}-%`);
       } else if (level !== "province") {
         return NextResponse.json({ status: "choices", choices: [] });
       }
