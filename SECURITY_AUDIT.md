@@ -18,12 +18,12 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - [ ] Test login, logout, wrong password, non-admin user, cross-scope access, and raw-phone reveal against the configured preview deployment. The connected Vercel integration currently denies deployment access, so the preview health endpoint could not be checked from here.
 - [ ] Request Supabase Support to move existing PostGIS (and, if possible, ltree) to the non-exposed `extensions` schema; verify spatial operations and rerun Security Advisor before declaring this database review clean.
 
-## 2. Zero PII to LLM (Groq)
+## 2. AI and personal-data handling (current code)
 
-- [x] /api/ai-router sends only the natural-language query string and optional context_scope_code.
-- [x] The system prompt forbids personal data.
-- [x] Groq is limited to function calling; leader records and phone numbers are fetched by the backend.
-- [x] Citizen GPS coordinates, names, and phone numbers are not included in prompts.
+- [x] The current `/api/ai-router` implementation performs deterministic lookups against the official NISR administrative-boundary service; it does not call Groq or another LLM.
+- [x] The search query is used to look up administrative-place names; citizen GPS coordinates are not sent by this route.
+- [x] Leader records are fetched server-side and phone numbers are masked before being returned.
+- [ ] Groq/LLM privacy controls are not verified as an active feature because no LLM call exists in the current route. If an LLM is introduced later, test the prompt/tool implementation and data minimization before enabling it.
 
 ## 3. Phone Number Protection
 
