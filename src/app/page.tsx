@@ -264,7 +264,11 @@ export default function HomePage() {
                     ? "Wemejwe nawe"
                     : data.source === "nearest"
                       ? "Igereranya ry'umudugudu uri hafi"
-                      : confidenceInfo.text}
+                      : data.source === "map"
+                        ? topScore >= 80
+                          ? "Ikarita n'imbibi bihuye cyane"
+                          : "Ahantu ku ikarita hasaba kugenzurwa"
+                        : confidenceInfo.text}
                 </span>
               </span>
             </div>
@@ -279,7 +283,7 @@ export default function HomePage() {
                 Uyu ni umudugudu wegereye aho GPS yerekanye. Ibi ni amanota yo kugereranya, si amahirwe apimwe; genzura cyangwa uhitemo undi.
               </p>
             )}
-            {(data.source === "gps" || data.source === "offline") && (
+            {(data.source === "gps" || data.source === "map" || data.source === "offline") && (
               <p className="mb-4 text-[11px] text-muted-foreground">
                 Iki ni igipimo cy'ihurirana ry'uruziga rwa GPS cyangwa ikimenyetso cyo ku ikarita n'imbibi; si amahirwe apimwe yo kuba umudugudu ari wo.
               </p>
