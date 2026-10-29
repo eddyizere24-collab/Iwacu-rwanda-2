@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isSupabaseConfigured } from "@/lib/supabase/server";
+import { isSupabaseAuthConfigured, isSupabaseConfigured } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -14,8 +14,8 @@ export async function GET() {
     "env:SUPABASE_SERVICE_ROLE_KEY": process.env.SUPABASE_SERVICE_ROLE_KEY
       ? "ok"
       : "missing",
-    "env:ADMIN_WRITE_TOKEN": process.env.ADMIN_WRITE_TOKEN ? "ok" : "missing",
-    supabase_configured: isSupabaseConfigured() ? "ok" : "missing",
+    supabase_auth_configured: isSupabaseAuthConfigured() ? "ok" : "missing",
+    supabase_database_configured: isSupabaseConfigured() ? "ok" : "missing",
   };
 
   const degraded = Object.values(checks).some((v) => v === "missing");
