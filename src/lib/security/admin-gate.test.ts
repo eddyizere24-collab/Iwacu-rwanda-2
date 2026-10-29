@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { adminCanManageScope, type AdminIdentity } from "@/lib/security/admin-gate";
+import { adminCanManageScope, requireAdminWrite, type AdminIdentity } from "@/lib/security/admin-gate";
 
 const districtAdmin: AdminIdentity = {
   userId: "district-admin-id",
@@ -43,5 +43,29 @@ describe("adminCanManageScope", () => {
     assert.equal(adminCanManageScope(superAdmin, "RW-01-01-02-03"), true);
     assert.equal(adminCanManageScope(superAdmin, "RW-01-%"), false);
     assert.equal(adminCanManageScope(superAdmin, "RW-01-01-02-03-04-05"), false);
+  });
+});
+
+describe("requireAdminWrite", () => {
+  it("fails closed when Supabase Auth is not configured", async () => {
+    const keys = [
+      "NEXT_PUBLIC_SUPABASE_URL",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ] as const;
+    const saved = new Map(keys.map((key) => [key, process.env[key]]));
+    for (const key of keys) delete process.env[key];
+
+    try {
+      const result = await requireAdminWrite();
+      assert.deepEqual(result.ok, false);
+      if (!result.ok) assert.equal(result.status, 503);
+    } finally {
+      for (const key of keys) {
+        const value = saved.get(key);
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });
