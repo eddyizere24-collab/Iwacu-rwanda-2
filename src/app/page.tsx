@@ -7,6 +7,7 @@ import { LeaderCard } from "@/components/LeaderCard";
 import { ErrorDisplay } from "@/components/ErrorDisplay";
 import { RwandanSun } from "@/components/RwandanSun";
 import { AiSearchAssistant } from "@/components/AiSearchAssistant";
+import { VillagePicker } from "@/components/VillagePicker";
 import {
   MapPin,
   RotateCcw,
@@ -25,6 +26,7 @@ export default function HomePage() {
     errorMessageEng,
     locate,
     reset,
+    chooseVillage,
   } = useLocation();
 
   // Pre-permission consent dialog state (D1 section D)
@@ -100,6 +102,9 @@ export default function HomePage() {
           <div className="mt-8 flex flex-col items-center justify-center">
             <LocationButton status={status} onClick={handleLocateClick} />
           </div>
+          <div className="mx-auto mt-6 max-w-2xl">
+            <VillagePicker onSelect={chooseVillage} />
+          </div>
 
           {/* NCSA Law compliance note */}
           <div className="mt-8 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground/90">
@@ -159,6 +164,9 @@ export default function HomePage() {
             messageEng={errorMessageEng}
             onRetry={locate}
           />
+          <div className="mx-auto mt-6 max-w-2xl">
+            <VillagePicker onSelect={chooseVillage} />
+          </div>
 
           <div className="mt-4 text-center">
             <button
@@ -188,6 +196,10 @@ export default function HomePage() {
             </button>
           </div>
 
+          <div className="mx-auto max-w-2xl">
+            <VillagePicker onSelect={chooseVillage} />
+          </div>
+
           {/* D1 F1 & F2 Hierarchy Place Card */}
           <div className="overflow-hidden rounded-3xl border border-border bg-card p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/80 pb-4 mb-4">
@@ -211,10 +223,25 @@ export default function HomePage() {
               >
                 <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
                 <span>
-                  {confidenceInfo.text} ({data.matches[0]?.confidence ?? 100}%)
+                  {data.source === "manual"
+                    ? "Wemejwe nawe"
+                    : data.source === "nearest"
+                      ? `Igereranya — ${data.matches[0]?.confidence ?? 0}%`
+                      : `${confidenceInfo.text} (${data.matches[0]?.confidence ?? 0}%)`}
                 </span>
               </span>
             </div>
+
+            {data.source === "manual" && (
+              <p className="mb-4 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300">
+                Wahisemo kandi wemeje uyu mudugudu. Ibi ntibivuga ko GPS yawemeje.
+              </p>
+            )}
+            {data.source === "nearest" && (
+              <p className="mb-4 rounded-xl bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+                Uyu ni umudugudu wegereye aho GPS yerekanye. Ibi ni igereranya; genzura cyangwa uhitemo undi.
+              </p>
+            )}
 
             {/* Administrative hierarchy uses the matched official boundary data. */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
