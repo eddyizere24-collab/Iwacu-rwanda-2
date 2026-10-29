@@ -1,7 +1,8 @@
 -- =============================================================================
 -- IWACU RWANDA — PostgreSQL + PostGIS Schema (Nationwide administrative boundaries)
 -- =============================================================================
--- Strict compliance: NCSA Law No. 058/2021, Zero PII to LLM, Optimistic Locking
+-- Security design goals: zero PII to LLM, scoped authorization, and optimistic locking.
+-- Legal compliance requires a separate professional review.
 -- SRID 4326, GiST indexes, Row Level Security, Temporal leaders
 -- =============================================================================
 
