@@ -150,17 +150,12 @@ For the security-hardening preview, configure these variables for the preview ta
 
 ### Database security note
 
-The Supabase Security Advisor flags `public.spatial_ref_sys` because RLS is disabled on this PostGIS-managed table. Verification also shows that browser roles still have INSERT/UPDATE/DELETE privileges. A revoke migration was attempted but did not change those grants: the table is owned by `supabase_admin`, not the connected project database role. This is still critical and must not be marked fixed. A supported change executed by the actual owner/managed platform is required. If that owner approves public read-only access to coordinate-system definitions, the intended policy design would be:
+This database has PostGIS installed in `public`. Supabase confirms that `spatial_ref_sys` is owned by the managed role `supabase_admin`; the project SQL role cannot safely fix its permissions or enable RLS. **Do not run `ALTER TABLE public.spatial_ref_sys ENABLE ROW LEVEL SECURITY`, and do not drop PostGIS with `CASCADE`**: either action can fail or damage objects that depend on PostGIS.
 
-```sql
-ALTER TABLE public.spatial_ref_sys ENABLE ROW LEVEL SECURITY;
-CREATE POLICY spatial_ref_sys_public_read_only
-  ON public.spatial_ref_sys
-  FOR SELECT TO anon, authenticated
-  USING (true);
-```
+For an existing project with geometry/geography columns, the supported fix is to contact [Supabase Support](https://supabase.com/kb/troubleshooting/security-advisor-flags-spatial_ref_sys-and-other-postgis-objects-in-the-public-schema) and request that PostGIS be moved to the non-exposed `extensions` schema. Ask them to preserve dependent objects and confirm whether they can move `ltree` there too. Afterward, verify PostGIS is in `extensions`, test the location/geospatial queries, and rerun Supabase Security Advisor.
 
-Review the policy before running it. The current connected role may not have permission to apply it; do not enable RLS without ensuring the read policy is created successfully and testing PostGIS-dependent application queries.
+For **new databases**, this repository's `sql/schema.sql` installs PostGIS and ltree in `extensions` from the start. `CREATE EXTENSION IF NOT EXISTS ... WITH SCHEMA extensions` does not move an extension that is already installed elsewhere; applying that statement alone cannot fix this existing project.
+
 6. After the first deploy succeeds, open the site and test:
    - GPS locate
    - Admin login (email and password)
