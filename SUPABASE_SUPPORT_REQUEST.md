@@ -20,4 +20,26 @@ The extension-owned table `public.spatial_ref_sys` is owned by `supabase_admin`.
 
 After the change, we will verify the extension schema, run spatial-function smoke tests, and rerun Security Advisor.
 
+### Requested operator procedure (official Supabase-supported in-place move)
+
+The installed version is `3.3.7` and the available transition version `3.3.7next` is present. Our project role is `postgres`, not a superuser/member of `supabase_admin`; trying this procedure from the project role fails with permission denied on `pg_extension`. Please run the supported procedure as the appropriate managed operator:
+
+```sql
+BEGIN;
+UPDATE pg_extension
+   SET extrelocatable = true
+ WHERE extname = 'postgis';
+
+ALTER EXTENSION postgis SET SCHEMA extensions;
+ALTER EXTENSION postgis UPDATE TO "3.3.7next";
+ALTER EXTENSION postgis UPDATE;
+
+UPDATE pg_extension
+   SET extrelocatable = false
+ WHERE extname = 'postgis';
+COMMIT;
+```
+
+Please preserve the `postgis_topology` extension and all dependent objects. Once complete, we will verify the extension schema and rerun the location-confidence smoke test and Security Advisor.
+
 Thank you.
