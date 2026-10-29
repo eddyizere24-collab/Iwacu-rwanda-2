@@ -41,7 +41,7 @@ export async function GET() {
       if (error) {
         console.error("[health] Supabase database connectivity check failed:", error.message);
       }
-    } catch (error) {
+    } catch {
       checks.database_connection = "error";
       console.error("[health] Supabase database connectivity check threw an error.");
     }
