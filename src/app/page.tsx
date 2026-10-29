@@ -155,6 +155,12 @@ export default function HomePage() {
         </section>
       )}
 
+      {(status === "requesting_gps" || status === "locating") && (
+        <div className="mx-auto mt-6 max-w-2xl">
+          <VillagePicker onSelect={chooseVillage} />
+        </div>
+      )}
+
       {/* 3. ERROR DISPLAY (D1 section H) */}
       {status === "error" && (
         <div className="my-6">
