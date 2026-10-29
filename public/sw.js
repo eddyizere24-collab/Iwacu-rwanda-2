@@ -7,7 +7,7 @@
 const CACHE_VERSION = "iwacu-v2-nocache-html";
 const SHELL_CACHE = `iwacu-shell-${CACHE_VERSION}`;
 const BOUNDARIES_CACHE = `iwacu-boundaries-${CACHE_VERSION}`;
-const LOCATION_INDEX_CACHE = "iwacu-location-index-v1";
+const LOCATION_INDEX_CACHE = "iwacu-location-index-v2-2026-10-30";
 const LOCATION_INDEX_URL = "/api/locate?index=1";
 
 // ---------------------------------------------------------------------------
@@ -74,18 +74,18 @@ self.addEventListener("fetch", (event) => {
 
   // National location index: keep one compact verified copy for offline picker use.
   if (url.pathname === "/api/locate" && url.searchParams.get("index") === "1") {
-    event.respondWith((async () => {
-      const cache = await caches.open(LOCATION_INDEX_CACHE);
-      const cacheKey = new Request(LOCATION_INDEX_URL, { method: "GET" });
-      const cached = await cache.match(cacheKey);
-      const refresh = fetch(request).then(async (response) => {
+    const cachePromise = caches.open(LOCATION_INDEX_CACHE);
+    const cacheKey = new Request(new URL(LOCATION_INDEX_URL, self.location.origin).toString());
+    const refresh = cachePromise.then((cache) =>
+      fetch(request).then(async (response) => {
         if (response.ok) await cache.put(cacheKey, response.clone());
         return response;
-      });
-      if (cached) {
-        event.waitUntil(refresh.then(() => undefined).catch(() => undefined));
-        return cached;
-      }
+      })
+    );
+    event.waitUntil(refresh.then(() => undefined).catch(() => undefined));
+    event.respondWith(cachePromise.then(async (cache) => {
+      const cached = await cache.match(cacheKey);
+      if (cached) return cached;
       try {
         return await refresh;
       } catch {
@@ -94,7 +94,7 @@ self.addEventListener("fetch", (event) => {
           { status: 503, headers: { "Content-Type": "application/json" } }
         );
       }
-    })());
+    }));
     return;
   }
 
