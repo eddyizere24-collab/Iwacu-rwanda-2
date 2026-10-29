@@ -669,6 +669,20 @@ BEGIN
     WHERE cell_scope_code IS NOT NULL AND cell_name IS NOT NULL
       AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
     GROUP BY cell_scope_code, cell_name
+
+    UNION ALL
+
+    -- Country geometry is dissolved incrementally from the same official
+    -- village polygons; repeated batches are merged by the upsert below.
+    SELECT
+      'RW',
+      'RW',
+      'u Rwanda',
+      'Rwanda',
+      'country'::boundary_level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+    FROM normalized
+    WHERE polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
   )
   INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
   SELECT scope_code, path::ltree, name_kiny, name_eng, level, geom
@@ -685,9 +699,56 @@ BEGIN
     updated_at = now(),
     version = boundaries.version + 1;
 
+  -- Materialize parent_id links across the complete administrative hierarchy.
+  -- The parent is the preceding, hyphen-delimited scope-code segment.
+  UPDATE public.boundaries AS child
+  SET parent_id = parent.id
+  FROM public.boundaries AS parent
+  WHERE child.scope_code <> 'RW'
+    AND parent.scope_code = regexp_replace(child.scope_code, '-[^-]+
+
+REVOKE EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) TO service_role;
+
+
+
+-- -----------------------------------------------------------------------------
+-- GRANTS (Supabase roles)
+-- -----------------------------------------------------------------------------
+-- Untrusted API roles must not be able to create objects in the schema used by
+-- SECURITY DEFINER routines.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, anon, authenticated;
+
+-- Avoid granting EXECUTE on future functions by default.
+-- The project is intended to apply this schema in Supabase SQL Editor as postgres.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated;
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+
+-- Browser clients use the application APIs for boundaries and leaders. The
+-- server uses the service-role key only after performing its own auth checks.
+-- Revoke all base-table privileges so browser roles cannot bypass API controls.
+REVOKE ALL PRIVILEGES ON TABLE boundaries FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE leaders FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE admin_profiles FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE audit_logs FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE inactive_number_reports FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE inactive_number_reports TO service_role;
+
+-- These safe, deliberately restricted read paths are retained where needed.
+GRANT SELECT ON v_active_leaders TO anon, authenticated;
+GRANT SELECT ON admin_profiles TO authenticated;
+GRANT SELECT ON audit_logs TO authenticated;
+
+-- End of schema
+, '')
+    AND child.parent_id IS DISTINCT FROM parent.id;
+
   RETURN v_village_count;
 END;
-$$;
+$;
 
 REVOKE EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) TO service_role;
