@@ -163,6 +163,31 @@ CREATE INDEX idx_audit_logs_actor ON audit_logs (actor_id);
 CREATE INDEX idx_audit_logs_table_record ON audit_logs (table_name, record_id);
 CREATE INDEX idx_audit_logs_created ON audit_logs (created_at DESC);
 
+-- ----------------------------------------------------------------------------- 
+-- INACTIVE NUMBER REPORTS (citizen submissions; server-mediated access only)
+-- -----------------------------------------------------------------------------
+CREATE TABLE inactive_number_reports (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  leader_id       TEXT NOT NULL CHECK (length(leader_id) BETWEEN 1 AND 100),
+  leader_name     TEXT NOT NULL CHECK (length(leader_name) BETWEEN 1 AND 160),
+  reported_phone  TEXT NOT NULL CHECK (length(reported_phone) BETWEEN 1 AND 32),
+  boundary_name   TEXT NOT NULL CHECK (length(boundary_name) BETWEEN 1 AND 200),
+  citizen_comment TEXT CHECK (citizen_comment IS NULL OR length(citizen_comment) <= 300),
+  status          TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'resolved', 'dismissed')),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at     TIMESTAMPTZ,
+  resolved_by     UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  CONSTRAINT inactive_number_report_resolution_consistency CHECK (
+    (status = 'pending' AND resolved_at IS NULL)
+    OR (status IN ('resolved', 'dismissed') AND resolved_at IS NOT NULL)
+  )
+);
+CREATE INDEX idx_inactive_number_reports_status_created
+  ON inactive_number_reports (status, created_at DESC);
+CREATE INDEX idx_inactive_number_reports_leader ON inactive_number_reports (leader_id);
+
+
 -- -----------------------------------------------------------------------------
 -- HELPER FUNCTIONS
 -- -----------------------------------------------------------------------------
@@ -231,6 +256,7 @@ ALTER TABLE boundaries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leaders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admin_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inactive_number_reports ENABLE ROW LEVEL SECURITY;
 
 -- Avoid recursive admin_profiles RLS policies by checking the current user's
 -- profile inside a narrowly scoped SECURITY DEFINER helper.
@@ -684,6 +710,8 @@ REVOKE ALL PRIVILEGES ON TABLE boundaries FROM anon, authenticated;
 REVOKE ALL PRIVILEGES ON TABLE leaders FROM anon, authenticated;
 REVOKE ALL PRIVILEGES ON TABLE admin_profiles FROM anon, authenticated;
 REVOKE ALL PRIVILEGES ON TABLE audit_logs FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE inactive_number_reports FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE inactive_number_reports TO service_role;
 
 -- These safe, deliberately restricted read paths are retained where needed.
 GRANT SELECT ON v_active_leaders TO anon, authenticated;
