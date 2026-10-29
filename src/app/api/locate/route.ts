@@ -371,6 +371,39 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
     const supabase = createSupabasePublicClient();
     const params = new URL(req.url).searchParams;
+
+    if (params.get("index") === "1") {
+      const pageSize = 1000;
+      const starts = Array.from({ length: 18 }, (_, index) => index * pageSize);
+      const pageResults = await Promise.all(starts.map(async (start) => {
+        const result = await supabase.from("boundaries")
+          .select("id, scope_code, name_kiny, name_eng, level, parent_id")
+          .is("valid_to", null)
+          .order("scope_code", { ascending: true })
+          .range(start, start + pageSize - 1);
+        return { start, ...result };
+      }));
+      const failedPage = pageResults.find((page) => page.error);
+      if (failedPage) {
+        console.error("[locate] national index page query failed:", failedPage.error?.message);
+        return NextResponse.json({ status: "error", message: "Location index unavailable." }, { status: 503 });
+      }
+      const rows = pageResults.flatMap((page) => page.data ?? []);
+      const codeById = new Map(rows.map((row) => [row.id, row.scope_code]));
+      const choices = rows
+        .filter((row) => row.level !== "country")
+        .map((row) => ({
+          scope_code: row.scope_code,
+          name_kiny: row.name_kiny,
+          name_eng: row.name_eng,
+          level: row.level,
+          parent_scope_code: row.parent_id ? (codeById.get(row.parent_id) ?? null) : null,
+        }));
+      return NextResponse.json({ status: "index", choices }, {
+        headers: { "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800" },
+      });
+    }
+
     const q = (params.get("q") ?? "").trim().replace(/[%,_()]/g, " ").slice(0, 80);
     const parentScopeCode = (params.get("parent_scope_code") ?? "").trim();
     const requestedLevel = (params.get("level") ?? "province").trim();
