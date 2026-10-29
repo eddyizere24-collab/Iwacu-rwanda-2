@@ -376,6 +376,39 @@ export default function HomePage() {
                 </div>
               </div>
             )}
+
+            <div className="mt-5 rounded-2xl border border-border bg-muted/20 p-4">
+              <p className="text-sm font-bold">Fasha kunoza igenzura ry'ahantu (ubishatse gusa)</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Niba wemera, tubika gusa umudugudu wemeje, uburyo wakoresheje, ikosa rya GPS niba ryarabonetse, n'aho hafi y'aho telefone yari iri (hafi ya kilometero imwe). Ntidubika izina ryawe, telefone, konti cyangwa IP. Ushobora kutabyemera; nta cyo bizahindura ku ikoreshwa ry'urubuga.
+              </p>
+              <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={feedbackConsent}
+                  onChange={(event) => {
+                    setFeedbackConsent(event.target.checked);
+                    if (!event.target.checked) setFeedbackStatus("idle");
+                  }}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-[#20603D]"
+                />
+                <span>Nemeza ko umudugudu ugaragaye ari wo cyangwa uwo nahisemo, kandi nemeye gutanga aya makuru atarimo umwirondoro.</span>
+              </label>
+              <button
+                type="button"
+                disabled={!feedbackConsent || feedbackStatus === "sending"}
+                onClick={() => void handleFeedbackSubmit()}
+                className="mt-3 min-h-[42px] w-full rounded-xl bg-[#20603D] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {feedbackStatus === "sending" ? "Turimo kohereza..." : "Emeza kandi wohereze"}
+              </button>
+              {feedbackStatus === "sent" && (
+                <p role="status" className="mt-2 text-xs text-emerald-700">Urakoze. Igitekerezo cyawe cyakiriwe.</p>
+              )}
+              {feedbackStatus === "error" && (
+                <p role="status" className="mt-2 text-xs text-amber-700">Ntibyashobotse kubika igitekerezo. Ushobora gukomeza gukoresha urubuga.</p>
+              )}
+            </div>
           </div>
 
           {/* D1 F5 Leader Cards */}
