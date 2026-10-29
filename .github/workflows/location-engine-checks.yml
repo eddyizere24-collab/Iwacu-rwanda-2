@@ -30,6 +30,8 @@ jobs:
           node-version: 24
       - name: Install locked dependencies
         run: npm install --no-audit --no-fund
+      - name: Location ranking unit tests
+        run: npm run test:location
       - name: TypeScript type check
         run: npm run typecheck
       - name: Production build
