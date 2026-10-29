@@ -8,6 +8,7 @@ import { ErrorDisplay } from "@/components/ErrorDisplay";
 import { RwandanSun } from "@/components/RwandanSun";
 import { AiSearchAssistant } from "@/components/AiSearchAssistant";
 import { VillagePicker } from "@/components/VillagePicker";
+import { MapPinPicker } from "@/components/MapPinPicker";
 import {
   MapPin,
   RotateCcw,
@@ -27,10 +28,14 @@ export default function HomePage() {
     locate,
     reset,
     chooseVillage,
+    locateAtCoordinate,
+    submitLocationFeedback,
   } = useLocation();
 
   // Pre-permission consent dialog state (D1 section D)
   const [showConsentModal, setShowConsentModal] = useState(false);
+  const [feedbackConsent, setFeedbackConsent] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
 
   // Trigger locate with D1 pre-permission consent explanation
   function handleLocateClick() {
@@ -47,28 +52,46 @@ export default function HomePage() {
   }
 
   // Calculate confidence wording per D1 F3
-  function getConfidenceWording(confidence: number): { text: string; colorClass: string } {
-    if (confidence >= 80) {
+  function getConfidenceWording(score: number): { text: string; colorClass: string } {
+    if (score >= 80) {
       return {
-        text: "Igipimo cya GPS",
+        text: "GPS n'imbibi bihuye cyane",
         colorClass: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300",
       };
     }
-    if (confidence >= 50) {
+    if (score >= 50) {
       return {
-        text: "Igipimo cya GPS",
+        text: "Biracyasaba kugenzurwa",
         colorClass: "text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300",
       };
     }
     return {
-      text: "Igipimo cya GPS",
+      text: "Ahantu ntiharamenyekana neza",
       colorClass: "text-muted-foreground bg-muted",
     };
   }
 
-  const confidenceInfo = data?.matches[0]?.confidence
-    ? getConfidenceWording(data.matches[0].confidence)
-    : { text: "Twabyizeye cyane", colorClass: "text-emerald-700 bg-emerald-50" };
+  const topScore = data?.matches[0]?.confidence ?? 0;
+  const lowConfidence = Boolean(data && (
+    data.source === "nearest" ||
+    ((data.source === "gps" || data.source === "map" || data.source === "offline") && topScore < 50)
+  ));
+  const confidenceInfo = data
+    ? getConfidenceWording(topScore)
+    : { text: "Ahantu ntiharamenyekana neza", colorClass: "text-muted-foreground bg-muted" };
+
+  async function handleFeedbackSubmit() {
+    const scopeCode = data?.hierarchy?.village?.scope_code ?? data?.matches[0]?.scope_code;
+    if (!scopeCode || !feedbackConsent) return;
+    setFeedbackStatus("sending");
+    try {
+      await submitLocationFeedback(scopeCode);
+      setFeedbackStatus("sent");
+      setFeedbackConsent(false);
+    } catch {
+      setFeedbackStatus("error");
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-10">
