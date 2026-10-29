@@ -125,8 +125,11 @@ export default function HomePage() {
           <div className="mt-8 flex flex-col items-center justify-center">
             <LocationButton status={status} onClick={handleLocateClick} />
           </div>
-          <div className="mx-auto mt-6 max-w-2xl">
+          <div className="mx-auto mt-6 max-w-2xl space-y-4">
             <VillagePicker onSelect={chooseVillage} />
+            <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
+              void locateAtCoordinate(latitude, longitude, accuracy);
+            }} />
           </div>
 
           {/* NCSA Law compliance note */}
@@ -225,9 +228,14 @@ export default function HomePage() {
             </button>
           </div>
 
-          <div className="mx-auto max-w-2xl">
-            <VillagePicker onSelect={chooseVillage} />
-          </div>
+          {!lowConfidence && (
+            <div className="mx-auto max-w-2xl space-y-4">
+              <VillagePicker onSelect={chooseVillage} />
+              <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
+                void locateAtCoordinate(latitude, longitude, accuracy);
+              }} />
+            </div>
+          )}
 
           {/* D1 F1 & F2 Hierarchy Place Card */}
           <div className="overflow-hidden rounded-3xl border border-border bg-card p-6 shadow-sm">
@@ -255,8 +263,8 @@ export default function HomePage() {
                   {data.source === "manual"
                     ? "Wemejwe nawe"
                     : data.source === "nearest"
-                      ? `Igereranya — ${data.matches[0]?.confidence ?? 0}%`
-                      : `${confidenceInfo.text} (${data.matches[0]?.confidence ?? 0}%)`}
+                      ? "Igereranya ry'umudugudu uri hafi"
+                      : confidenceInfo.text}
                 </span>
               </span>
             </div>
@@ -273,76 +281,97 @@ export default function HomePage() {
             )}
             {(data.source === "gps" || data.source === "offline") && (
               <p className="mb-4 text-[11px] text-muted-foreground">
-                Ijanisha ryerekana igice cy'uruziga rw'ikosa rya GPS gihura n'imbibi z'umudugudu; si igipimo cy'ukuri cyapimwe ku bantu.
+                Iki ni igipimo cy'ihurirana ry'uruziga rwa GPS n'imbibi, si amahirwe apimwe yo kuba umudugudu ari wo.
               </p>
             )}
 
-            {/* Administrative hierarchy uses the matched official boundary data. */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-              <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Intara / Umujyi
-                </span>
-                <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.province?.name_kiny || "Ntibyemejwe"}
-                </span>
+            {/* Low-score route: show reliable hierarchy first, then let the citizen pick. */}
+            {lowConfidence ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Umurenge</span>
+                    <span className="mt-1 block truncate text-sm font-bold">{data.hierarchy?.sector?.name_kiny || "Ntibyemejwe neza"}</span>
+                  </div>
+                  <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Akagari</span>
+                    <span className="mt-1 block truncate text-sm font-bold">{data.hierarchy?.cell?.name_kiny || "Ntibyemejwe neza"}</span>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Umudugudu nturamenyekana neza. Hitamo uwo uzi ku rutonde cyangwa ukoreshe ikarita iri hasi.
+                </p>
+                <div className="space-y-4">
+                  <VillagePicker onSelect={chooseVillage} />
+                  <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
+                    void locateAtCoordinate(latitude, longitude, accuracy);
+                  }} />
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Intara / Umujyi</span>
+                    <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.province?.name_kiny || "Ntibyemejwe"}</span>
+                  </div>
+                  <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Akarere</span>
+                    <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.district?.name_kiny || "Ntibyemejwe"}</span>
+                  </div>
+                  <div className="col-span-2 rounded-xl border border-dashed border-border bg-muted/20 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Umudugudu</span>
+                    <span className="mt-1 block text-sm font-bold">Ugomba kuwemeza cyangwa kuwuhitamo</span>
+                  </div>
+                </div>
               </div>
-
-              <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Akarere
-                </span>
-                <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.district?.name_kiny || "Ntibyemejwe"}
-                </span>
+            ) : (
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+                <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Intara / Umujyi</span>
+                  <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.province?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
+                <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Akarere</span>
+                  <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.district?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
+                <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Umurenge</span>
+                  <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.sector?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
+                <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Akagari</span>
+                  <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.cell?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
+                <div className="rounded-xl border border-blue-600/30 bg-blue-50/50 p-3 dark:bg-blue-950/20">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">Umudugudu</span>
+                  <span className="mt-1 block truncate text-xs font-bold text-blue-700 dark:text-blue-300">{data.hierarchy?.village?.name_kiny || data.matches[0]?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
               </div>
+            )}
 
-              <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Umurenge
-                </span>
-                <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.sector?.name_kiny || "Ntibyemejwe"}
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Akagari
-                </span>
-                <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.cell?.name_kiny || "Ntibyemejwe"}
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-blue-600/30 bg-blue-50/50 dark:bg-blue-950/20 p-3">
-                <span className="text-[10px] uppercase font-bold text-blue-700 dark:text-blue-400 tracking-wider block">
-                  Umudugudu
-                </span>
-                <span className="text-xs font-bold text-blue-700 dark:text-blue-300 mt-0.5 block truncate">
-                  {data.hierarchy?.village?.name_kiny || data.matches[0]?.name_kiny || "Ntibyemejwe"}
-                </span>
-              </div>
-            </div>
-
-            {/* D1 F4 Overlap candidate villages if point lies on a border */}
+            {/* D1 F4: candidates can be explicitly confirmed without exposing raw scores. */}
             {data.matches.length > 1 && data.source !== "manual" && (
               <div className="mt-4 border-t border-border pt-3">
-                <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                   <Layers className="h-3.5 w-3.5 text-blue-600" />
-                  Dusanze imidugudu myinshi hafi yawe. Hitamo uwo uherereyemo:
+                  Imidugudu ishoboka. Kanda uwo uzi ko ari wo:
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {data.matches.map((m) => (
-                    <div
-                      key={m.scope_code}
-                      className="flex items-center justify-between text-xs rounded-lg border border-border bg-background p-2.5"
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {data.matches.map((match) => (
+                    <button
+                      key={match.scope_code}
+                      type="button"
+                      onClick={() => chooseVillage(
+                        match.scope_code,
+                        data.source === "map" ? "map" :
+                          data.source === "offline" ? "offline" :
+                          data.source === "nearest" ? "nearest" : "gps"
+                      )}
+                      className="flex min-h-[48px] items-center justify-between gap-3 rounded-lg border border-border bg-background p-3 text-left text-sm hover:border-[#20603D] hover:bg-[#20603D]/5"
                     >
-                      <span className="font-semibold text-foreground">
-                        {m.name_kiny}
+                      <span className="font-semibold">{match.name_kiny}</span>
+                      <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">
+                        {match.confidence >= 80 ? "Ihura cyane" : match.confidence >= 50 ? "Ishobora kuba hafi" : "Irasaba kugenzurwa"}
                       </span>
-                      <span className="text-blue-600 font-bold">{m.confidence}%</span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
