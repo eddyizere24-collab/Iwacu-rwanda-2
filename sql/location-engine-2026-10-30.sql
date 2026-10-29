@@ -77,6 +77,14 @@ AS $function$
       AND b.level = 'village'
       AND b.geom IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM ranked_intersections)
+      AND EXISTS (
+        SELECT 1
+        FROM public.boundaries AS country
+        WHERE country.level = 'country'
+          AND country.valid_to IS NULL
+          AND country.geom IS NOT NULL
+          AND ST_Covers(country.geom, c.point_geom)
+      )
     ORDER BY b.geom <-> c.point_geom
     LIMIT 3
   ),
@@ -90,7 +98,7 @@ AS $function$
         EXP(-n.distance_m / GREATEST(250.0, LEAST(GREATEST(COALESCE(p_accuracy_m, 100), 1), 50000)))
       ) OVER () AS total_weight
     FROM nearest AS n
-    WHERE n.distance_m <= LEAST(GREATEST(COALESCE(p_accuracy_m, 100) * 2, 1000.0), 50000.0)
+    WHERE n.distance_m <= 50000.0
   )
   SELECT
     ri.scope_code,
