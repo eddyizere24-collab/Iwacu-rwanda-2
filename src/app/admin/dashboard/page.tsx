@@ -36,6 +36,7 @@ import { BulkImportModal } from "@/components/BulkImportModal";
 import { AdminDossierModal } from "@/components/admin/AdminDossierModal";
 import { RwandanSun } from "@/components/RwandanSun";
 import type { AdministrativeUnit } from "@/lib/rwanda-geo";
+import { createSupabaseBrowserClient, isSupabaseBrowserConfigured } from "@/lib/supabase/client";
 import type { AdminTier } from "@/app/admin/login/page";
 
 interface StoredAdminSession {
@@ -61,6 +62,7 @@ export default function AdminDashboardPage() {
 
   const [leaders, setLeaders] = useState<LeaderPublic[]>([]);
   const [loading, setLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterLevel, setFilterLevel] = useState<string>("all");
@@ -167,42 +169,116 @@ export default function AdminDashboardPage() {
   const [revealedPhones, setRevealedPhones] = useState<Record<string, string>>({});
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
-  // Load the selected scope and map it to canonical NISR hierarchy codes.
+  // Verify the real Supabase session and admin profile before showing the dashboard.
+  // localStorage is only a display preference; it is never trusted for authorization.
   useEffect(() => {
-    const stored = localStorage.getItem("iwacu_admin_session");
-    if (!stored) return;
-    try {
-      const parsed = JSON.parse(stored) as StoredAdminSession;
-      setSession(parsed);
-      const parts = parsed.scope_code.split("-");
-      if (parts[0] === "RW" && parts[1]?.startsWith("P")) {
-        setFilterProvince(parts.slice(0, 2).join("-"));
-        if (parsed.tier === "district" || parsed.tier === "sector" || parsed.tier === "cell") {
-          setFilterDistrict(parts.slice(0, 3).join("-"));
-        } else {
-          setFilterDistrict("");
+    let active = true;
+
+    async function verifyAdminSession() {
+      if (!isSupabaseBrowserConfigured()) {
+        localStorage.removeItem("iwacu_admin_session");
+        router.replace("/admin/login");
+        return;
+      }
+
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError || !authData.user) {
+          localStorage.removeItem("iwacu_admin_session");
+          router.replace("/admin/login");
+          return;
         }
-        if (parsed.tier === "sector" || parsed.tier === "cell") {
-          setFilterSector(parts.slice(0, 4).join("-"));
+
+        const { data: profile, error: profileError } = await supabase
+          .from("admin_profiles")
+          .select("user_id, full_name, scope_code, is_super_admin")
+          .eq("user_id", authData.user.id)
+          .maybeSingle();
+
+        if (profileError || !profile || typeof profile.scope_code !== "string") {
+          localStorage.removeItem("iwacu_admin_session");
+          await supabase.auth.signOut();
+          router.replace("/admin/login");
+          return;
+        }
+
+        const profileScope = profile.scope_code;
+        const validScope = /^RW(?:-[0-9A-Z]{2,})*$/.test(profileScope);
+        const profileDepth = profileScope === "RW" ? 0 : profileScope.split("-").length - 1;
+        if (
+          !validScope ||
+          profileDepth > 5 ||
+          (profileScope === "RW" && profile.is_super_admin !== true)
+        ) {
+          localStorage.removeItem("iwacu_admin_session");
+          await supabase.auth.signOut();
+          router.replace("/admin/login");
+          return;
+        }
+
+        let preferredScope = profileScope;
+        let preferredName = profile.full_name || profileScope;
+        try {
+          const stored = localStorage.getItem("iwacu_admin_session");
+          if (stored) {
+            const parsed = JSON.parse(stored) as Partial<StoredAdminSession>;
+            const requested = typeof parsed.scope_code === "string" ? parsed.scope_code : "";
+            const allowed =
+              profile.is_super_admin === true ||
+              requested === profileScope ||
+              (profileScope !== "RW" && requested.startsWith(profileScope + "-"));
+            const requestedDepth = requested === "RW" ? 0 : requested.split("-").length - 1;
+            if (/^RW(?:-[0-9A-Z]{2,})*$/.test(requested) && requestedDepth <= 4 && allowed) {
+              preferredScope = requested;
+              preferredName = typeof parsed.scope_name === "string" ? parsed.scope_name : requested;
+            }
+          }
+        } catch {
+          localStorage.removeItem("iwacu_admin_session");
+        }
+
+        const depth = preferredScope === "RW" ? 0 : preferredScope.split("-").length - 1;
+        const tierByDepth: AdminTier[] = ["national", "province", "district", "sector", "cell"];
+        const verifiedSession: StoredAdminSession = {
+          tier: tierByDepth[Math.min(depth, 4)],
+          scope_code: preferredScope,
+          scope_name: preferredName,
+          email: authData.user.email || "",
+          loginTime: new Date().toISOString(),
+        };
+
+        if (!active) return;
+        setSession(verifiedSession);
+        localStorage.setItem("iwacu_admin_session", JSON.stringify(verifiedSession));
+        const parts = preferredScope.split("-");
+        if (parts[0] === "RW" && parts.length > 1) {
+          setFilterProvince(parts.slice(0, 2).join("-"));
+          setFilterDistrict(depth >= 2 ? parts.slice(0, 3).join("-") : "");
+          setFilterSector(depth >= 3 ? parts.slice(0, 4).join("-") : "all");
         } else {
+          setFilterProvince("");
+          setFilterDistrict("");
           setFilterSector("all");
         }
-      } else {
-        setFilterProvince("");
-        setFilterDistrict("");
-        setFilterSector("all");
+        setAuthReady(true);
+      } catch (error) {
+        console.error("[admin dashboard] session verification failed:", error);
+        localStorage.removeItem("iwacu_admin_session");
+        router.replace("/admin/login");
       }
-    } catch {
-      localStorage.removeItem("iwacu_admin_session");
     }
-  }, []);
+
+    void verifyAdminSession();
+    return () => { active = false; };
+  }, [router]);
 
   const fetchLeaders = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const scopeParam = session.tier === "national" ? "RW" : session.scope_code;
-      const res = await fetch(`/api/leaders?scope_code=${encodeURIComponent(scopeParam)}&include_dossier=true`);
+      const res = await fetch(`/api/leaders?scope_code=${encodeURIComponent(scopeParam)}`, { cache: "no-store" });
       const json = await res.json();
       if (res.ok && json.leaders) {
         setLeaders(json.leaders);
@@ -229,9 +305,10 @@ export default function AdminDashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (!authReady) return;
     fetchLeaders();
     fetchReports();
-  }, [fetchLeaders, fetchReports]);
+  }, [authReady, fetchLeaders, fetchReports]);
 
   /**
    * Authority Check: Can the current admin edit or assign this leader's core role?
@@ -296,7 +373,7 @@ export default function AdminDashboardPage() {
     }
   }
 
-  async function toggleRevealPhone(leaderId: string, currentMasked?: string) {
+  async function toggleRevealPhone(leaderId: string) {
     if (revealedPhones[leaderId]) {
       setRevealedPhones((prev) => {
         const copy = { ...prev };
@@ -306,29 +383,31 @@ export default function AdminDashboardPage() {
       return;
     }
 
+    setError(null);
     try {
       const scopeParam = session.tier === "national" ? "RW" : session.scope_code;
-      const res = await fetch(`/api/leaders?scope_code=${scopeParam}&reveal=true`);
+      const params = new URLSearchParams({
+        scope_code: scopeParam,
+        reveal: "true",
+        leader_id: leaderId,
+      });
+      const res = await fetch(`/api/leaders?${params.toString()}`, { cache: "no-store" });
       const json = await res.json();
-      if (res.ok && json.leaders) {
-        const found = json.leaders.find((l: any) => l.id === leaderId);
-        if (found?.phone_number || found?.phone_raw) {
-          setRevealedPhones((prev) => ({
-            ...prev,
-            [leaderId]: found.phone_number || found.phone_raw,
-          }));
-          return;
-        }
+      const found = Array.isArray(json.leaders)
+        ? (json.leaders as LeaderPublic[]).find((leader) => leader.id === leaderId)
+        : undefined;
+
+      if (!res.ok || typeof found?.phone_raw !== "string" || !found.phone_raw.trim()) {
+        setError(json.message_kiny || "Nimero nyayo ntiyabonetse cyangwa nta burenganzira ufite bwo kuyibona.");
+        return;
       }
+
       setRevealedPhones((prev) => ({
         ...prev,
-        [leaderId]: currentMasked || "+250788000000",
+        [leaderId]: found.phone_raw as string,
       }));
     } catch {
-      setRevealedPhones((prev) => ({
-        ...prev,
-        [leaderId]: currentMasked || "+250788000000",
-      }));
+      setError("Ntibyashobotse kubona nimero nyayo. Ongera ugerageze.");
     }
   }
 
@@ -352,17 +431,36 @@ export default function AdminDashboardPage() {
     return matchesSearch && matchesLevel && matchesProvince && matchesDistrict && matchesSector;
   });
 
-  function handleLogout() {
+  async function handleLogout() {
     if (typeof window !== "undefined") {
       localStorage.removeItem("iwacu_admin_session");
     }
-    router.push("/admin/login");
+    try {
+      if (isSupabaseBrowserConfigured()) {
+        await createSupabaseBrowserClient().auth.signOut();
+      }
+    } finally {
+      router.replace("/admin/login");
+    }
   }
 
   // Staffing metrics
   const totalInScope = leaders.length;
   const verifiedCount = leaders.filter((l) => l.is_verified).length;
   const pendingReportsCount = reports.filter((r) => r.status === "pending").length;
+
+  // Do not render the administration interface until the real Auth session and
+  // authoritative admin profile have been verified successfully.
+  if (!authReady) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div role="status" aria-live="polite" className="rounded-2xl border border-border bg-card px-6 py-5 text-center shadow-sm">
+          <RwandanSun size={40} glow={false} />
+          <p className="mt-3 text-sm font-semibold text-foreground">Turimo kugenzura uburenganzira bwawe…</p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -673,7 +771,7 @@ export default function AdminDashboardPage() {
                         const fullName = `${leader.first_name} ${leader.last_name}`;
                         const isPhoneRevealed = !!revealedPhones[leader.id];
                         const phoneDisplay =
-                          revealedPhones[leader.id] || leader.phone_raw || leader.phone_masked;
+                          revealedPhones[leader.id] || leader.phone_masked;
 
                         return (
                           <tr key={leader.id} className="hover:bg-muted/30 transition-colors">
@@ -737,7 +835,7 @@ export default function AdminDashboardPage() {
                                 <span>{phoneDisplay}</span>
                                 <button
                                   type="button"
-                                  onClick={() => toggleRevealPhone(leader.id, leader.phone_masked || undefined)}
+                                  onClick={() => toggleRevealPhone(leader.id)}
                                   className="text-muted-foreground hover:text-foreground"
                                   title={isPhoneRevealed ? "Hisha nimero" : "Erekana nimero yose"}
                                 >

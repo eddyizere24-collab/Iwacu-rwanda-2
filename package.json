@@ -12,7 +12,8 @@
     "db:migrate": "echo 'Run sql/schema.sql against your Supabase project via the SQL Editor'",
     "ingest:boundaries": "tsx scripts/ingest-boundaries.ts",
     "download:boundaries": "tsx scripts/download-rwanda-boundaries.ts",
-    "ingest:national-boundaries": "npm run download:boundaries && npm run ingest:boundaries -- public/offline/rwanda-village-boundaries.geojson"
+    "ingest:national-boundaries": "npm run download:boundaries && npm run ingest:boundaries -- public/offline/rwanda-village-boundaries.geojson",
+    "test:security": "tsx --test src/lib/security/admin-gate.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.31.0",

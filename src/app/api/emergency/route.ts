@@ -2,18 +2,18 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-/** National emergency contacts — static list (no DB). Includes common Rwanda helplines. */
+/** National emergency contacts checked against official Rwanda government and Police sources on 2026-10-29. Review periodically. */
 const NATIONAL = [
   {
     number: "112",
-    label_kiny: "Polisi y'u Rwanda",
-    label_eng: "Rwanda National Police",
-    category: "police",
+    label_kiny: "Ubutabazi rusange / Polisi",
+    label_eng: "General emergency / Police",
+    category: "emergency",
   },
   {
-    number: "113",
+    number: "111",
     label_kiny: "Abazimya umuriro",
-    label_eng: "Fire Brigade",
+    label_eng: "Fire and Rescue",
     category: "fire",
   },
   {
@@ -23,22 +23,22 @@ const NATIONAL = [
     category: "medical",
   },
   {
-    number: "114",
-    label_kiny: "Isuzuma ry'ibiza / traffic",
-    label_eng: "Traffic / road emergency",
+    number: "113",
+    label_kiny: "Impanuka zo mu muhanda",
+    label_eng: "Traffic accidents",
     category: "traffic",
   },
   {
     number: "116",
     label_kiny: "Ubufasha bw'abana",
-    label_eng: "Child helpline",
+    label_eng: "Child help line",
     category: "child",
   },
   {
     number: "3512",
-    label_kiny: "Isuzuma ry'ubuzima (RBC / health info)",
-    label_eng: "Health information line",
-    category: "health_info",
+    label_kiny: "Ubufasha ku ihohoterwa rishingiye ku gitsina",
+    label_eng: "Gender-based violence helpline",
+    category: "gender_based_violence",
   },
 ];
 

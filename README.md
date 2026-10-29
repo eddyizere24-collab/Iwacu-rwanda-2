@@ -1,15 +1,15 @@
 # IWACU RWANDA
 
-Civic technology platform that lets Rwandan citizens discover their exact administrative location and local leaders using GPS, IP, or manual search — with extreme geospatial precision and strict NCSA Law compliance.
+Civic technology platform that helps Rwandan citizens identify their likely administrative location and discover local leaders using GPS or manual place search, with confidence-ranked geospatial matching. Security controls are designed for review against applicable Rwanda data-protection requirements; this project has not received a legal compliance certification.
 
-**MVP Scope**: Gasabo District only.
+**Data readiness (2026-10-29)**: The live database contains 17,423 Rwanda-wide administrative boundary records, but the live leaders table is empty. Do not present the leader directory as complete or current until leader records have been imported from a trusted, verified source and checked. The repository's offline GeoJSON currently covers Gasabo only; nationwide offline support is not yet verified.
 
 ## Stack
 
 - **Frontend**: Next.js 15 (App Router) · React 19 · Tailwind CSS · shadcn/ui · Lucide · Inter
 - **Backend**: Next.js API Routes
 - **Database**: Supabase (PostgreSQL + PostGIS)
-- **AI**: Groq (Function Calling only — Zero PII)
+- **Assistant/search route (current implementation)**: deterministic lookup against the official NISR administrative-boundary service; no Groq/LLM call is wired into `/api/ai-router` yet.
 - **Offline**: Service Worker + Turf.js
 - **Maps**: MapLibre GL
 
@@ -17,7 +17,7 @@ Civic technology platform that lets Rwandan citizens discover their exact admini
 
 ```bash
 cp .env.example .env.local
-# Fill Supabase + Groq keys
+# Fill the Supabase variables described in DEPLOYMENT.md; Groq is not used by the current search route.
 
 npm install
 npm run dev
@@ -27,16 +27,16 @@ npm run dev
 
 1. Create a Supabase project with PostGIS enabled.
 2. Run `sql/schema.sql` in the SQL Editor.
-3. Ingest Gasabo boundaries: `npm run ingest:boundaries`
-4. Seed leaders: `npm run seed:leaders`
+3. For a fresh development database, ingest the boundary dataset supported by the current import tool. The live project already contains the verified national boundary dataset; do not rerun bulk ingestion there without a backup and a reviewed migration plan.
+4. Seed/import leaders only from a trusted, verified source. Do not use fabricated names, roles, or phone numbers.
 
-## Security Highlights (NCSA No. 058/2021)
+## Security Controls (subject to security and legal review)
 
-- Citizens are 100 % anonymous.
-- Groq receives only natural-language queries and returns function-call intents. Zero personal or leader data ever reaches the LLM.
+- No citizen account is required for basic public lookups. This is not a guarantee of complete anonymity: review hosting/request logs, browser storage, geolocation handling, and the privacy notice before public launch.
+- The current place-search route uses deterministic NISR lookup and does not send queries or citizen data to an LLM. Any future LLM integration requires a separate privacy review.
 - Phone numbers are masked at the API layer and only become `tel:` links after explicit user action.
 - Admin writes use optimistic locking (`version` column). Concurrent edits return HTTP 409 + diff.
-- RLS enforces scope-prefix authorization for admins.
+- Server-side routes and RLS enforce scope-aware authorization; national scope is reserved for a verified super-admin.
 
 ## Geospatial Confidence Algorithm
 
@@ -47,7 +47,7 @@ npm run dev
 5. Propagate the same confidence ratios up the hierarchy (never force 100 %).
 6. If max confidence < 5 % → `CONFIDENCE_TOO_LOW`.
 
-Offline mode performs the identical calculation with Turf.js against the cached Gasabo GeoJSON.
+Offline mode runs the location calculation with Turf.js against cached Gasabo GeoJSON. Nationwide offline behavior must not be claimed until the national assets are packaged and tested on real devices.
 
 ## Error States Implemented
 

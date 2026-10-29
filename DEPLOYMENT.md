@@ -11,9 +11,9 @@ This guide is written for a non-technical operator. Follow every step in order.
 3. Choose an organisation, give the project a name (e.g. `iwacu-rwanda`), set a strong database password, and pick a region close to Rwanda (e.g. Frankfurt or Cape Town if available).
 4. Wait until the project status is **Active**.
 5. In the left sidebar open **Project Settings → API**.
-   - Copy the **Project URL** → this is `NEXT_PUBLIC_SUPABASE_URL`.
-   - Copy the **anon public** key → this is `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-   - Copy the **service_role** key (keep it secret) → this is `SUPABASE_SERVICE_ROLE_KEY`.
+   - Copy the **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`.
+   - Copy the **publishable key** (starts with `sb_publishable_`) → set it as `NEXT_PUBLIC_SUPABASE_ANON_KEY` for the current code.
+   - Copy the server-only **service_role** key from the Legacy API Keys tab → `SUPABASE_SERVICE_ROLE_KEY`. Never place it in a `NEXT_PUBLIC_*` variable, source code, or chat.
 
 ---
 
@@ -31,6 +31,11 @@ The script creates:
 - Tables: `boundaries`, `leaders`, `admin_profiles`, `audit_logs`
 - GiST indexes, RLS policies, views, and helper functions
 
+For a **fresh** database, apply these files in order: `sql/schema.sql`, `sql/security-hardening-migration.sql`, `sql/postgis-extensions-search-path-migration.sql`, `sql/security-hardening-followup-migration.sql`, `sql/security-public-grants-migration.sql`, `sql/leader-audit-foreign-key-indexes.sql`, `sql/ltree-extensions-migration.sql`, `sql/persist-inactive-number-reports.sql`, `sql/allow-dismissed-inactive-number-reports.sql`, `sql/deny-browser-access-to-inactive-reports.sql`, `sql/inactive-number-report-fk-index.sql`, `sql/retained-boundary-backup-privileges.sql`, and `sql/admin-national-scope-requires-super-admin.sql`. Some report-table definitions already exist in `schema.sql`; the later report migrations are written to safely align the final constraints, grants, deny-all policy, and supporting indexes.
+
+For an **existing** database, check the recorded migration history and apply only genuinely missing migrations in dependency order. Do not rerun a migration unless it is documented as repeatable. The search-path migration prepares app-owned spatial functions to resolve PostGIS in `extensions`; the follow-up migration moves RBAC helpers to a non-exposed schema and makes the safe leaders view use invoker permissions; the public-grants migration removes non-SELECT rights from that view. The inactive-report migrations ensure durable storage, allow the reviewed `dismissed` status, deny browser-role access, and index the resolver foreign key.
+The current project's PostGIS move has already been completed and verified. `SUPABASE_SUPPORT_REQUEST.md` is a generic template for another project that still has PostGIS in `public`; do not submit it for this project as a relocation request. It is not a submitted support ticket.
+
 ---
 
 ## 3. Create the first Super Admin
@@ -39,14 +44,14 @@ Still in the SQL Editor, run (replace the values):
 
 ```sql
 -- 1. First create the auth user via Supabase Authentication → Users → Add user
---    (use the email the admin will log in with, set a temporary password or use magic link later)
+--    (use the email and password the admin will use for Supabase Auth)
 
 -- 2. Then link the profile (replace USER_UUID and names)
 INSERT INTO admin_profiles (user_id, full_name, scope_code, is_super_admin)
 VALUES (
   'USER_UUID_FROM_AUTH_USERS',  -- copy from Authentication → Users
   'Admin Name',
-  'RW-01',                      -- Gasabo district prefix for MVP
+  'RW',                         -- National scope for the first super-admin
   true
 );
 ```
@@ -64,15 +69,15 @@ cp .env.example .env.local
 2. Open `.env.local` and fill in the values you copied from Supabase, plus a Groq key:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://xxxxxxxx.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
-SUPABASE_SERVICE_ROLE_KEY=eyJ...          # NEVER commit this
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_...
+SUPABASE_SERVICE_ROLE_KEY=your-server-only-service-role-key  # NEVER commit this
 GROQ_API_KEY=gsk_...
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 NEXT_PUBLIC_DEFAULT_DISTRICT_SCOPE=RW-01
 ```
 
-3. Get a free Groq API key at [https://console.groq.com](https://console.groq.com).
+3. `GROQ_API_KEY` is not needed by the current `/api/ai-router` implementation, which performs deterministic NISR lookup. Add it only if a future, reviewed change actually connects Groq.
 
 ---
 
@@ -133,17 +138,28 @@ git push -u origin main
 ```
 
 3. Go to [https://vercel.com](https://vercel.com) → **Add New Project** → Import the GitHub repo.
-4. In the Vercel project settings → **Environment Variables**, add the same keys you used in `.env.local`:
+4. In the Vercel project settings → **Environment Variables**, add:
    - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (publishable key; safe to expose)
+   - `SUPABASE_SERVICE_ROLE_KEY` (server-only secret; never expose it)
    - `GROQ_API_KEY`
-   - `NEXT_PUBLIC_APP_URL` = `https://your-project.vercel.app`
+   - `NEXT_PUBLIC_APP_URL` = your deployed site URL
    - `NEXT_PUBLIC_DEFAULT_DISTRICT_SCOPE` = `RW-01`
-5. Click **Deploy**.
+5. Redeploy after adding or changing environment variables.
+
+For the security-hardening preview, configure these variables for the preview target and the branch `security/part-2-auth-hardening` first. Do not add the new database URL or key to production until the preview checks pass.
+
+### Database security note
+
+The current Supabase project has PostGIS and ltree installed in the non-exposed `extensions` schema as of October 29, 2026. Live checks confirmed that `spatial_ref_sys` is now `extensions.spatial_ref_sys`, the PostGIS coordinate transform from SRID 4326 to 3857 works, and the location-confidence function still returns results. The app uses core PostGIS; `postgis_topology` is intentionally not installed because no application code uses it.
+
+For a **different existing database** that still has PostGIS in `public`, do not force RLS on `spatial_ref_sys` and do not drop PostGIS with `CASCADE`. The managed extension owner may prevent the project SQL role from changing extension-owned ACLs. Use the supported in-place move described by [Supabase Support](https://supabase.com/kb/troubleshooting/security-advisor-flags-spatial_ref_sys-and-other-postgis-objects-in-the-public-schema), preserve dependent geometry objects, then test spatial queries and rerun Security Advisor.
+
+The current Security Advisor still reports two informational notices for retained backup tables and a warning that leaked-password protection is disabled. Backup data is intentionally retained; do not drop it merely to silence an advisor notice. This Supabase organization is on the Free plan; Supabase documents leaked-password checking as Pro and above, so the warning cannot be cleared on Free. The Free-plan hardening step is to set a 12-character minimum and require lowercase, uppercase, digits, and symbols under Authentication → Sign In / Providers → Email. The warning means the breach-check feature is off, not that a password has leaked. See [Supabase password security](https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection).
+
 6. After the first deploy succeeds, open the site and test:
    - GPS locate
-   - Admin login (magic link)
+   - Admin login (email and password)
    - Offline mode (Chrome DevTools → Network → Offline)
 
 ---
@@ -154,7 +170,7 @@ git push -u origin main
 - [ ] GPS permission prompt appears
 - [ ] Confidence percentages are shown
 - [ ] Leader cards show masked phone numbers
-- [ ] Admin can log in with magic link
+- [ ] Admin can log in with Supabase email + password after Auth is configured
 - [ ] Admin can edit a leader and sees version numbers
 - [ ] Concurrent edit returns 409 with diff (test with two browsers)
 - [ ] Service Worker registers (Application tab → Service Workers)
@@ -169,9 +185,9 @@ git push -u origin main
 | “Missing SUPABASE_SERVICE_ROLE_KEY” | Add the variable in Vercel + redeploy |
 | RLS blocks admin | Confirm the user exists in `admin_profiles` with correct `scope_code` |
 | Geometry errors on ingest | Ensure source GeoJSON is WGS84; the RPC runs `ST_MakeValid` |
-| Magic link does not arrive | Check Supabase Auth → Email templates and spam folder |
+| Admin login says Auth is not configured | Set NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY in Vercel, then redeploy |
 | Groq 401 | Verify `GROQ_API_KEY` is correct and has credits |
 
 ---
 
-**You are done.** The MVP is live.
+**Deployment is not complete until the checklist above passes against the configured live database.**

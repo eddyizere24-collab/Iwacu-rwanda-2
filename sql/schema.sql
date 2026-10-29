@@ -1,15 +1,19 @@
 -- =============================================================================
 -- IWACU RWANDA — PostgreSQL + PostGIS Schema (Nationwide administrative boundaries)
 -- =============================================================================
--- Strict compliance: NCSA Law No. 058/2021, Zero PII to LLM, Optimistic Locking
+-- Security design goals: zero PII to LLM, scoped authorization, and optimistic locking.
+-- Legal compliance requires a separate professional review.
 -- SRID 4326, GiST indexes, Row Level Security, Temporal leaders
 -- =============================================================================
 
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS postgis_topology;
+-- Keep extension-owned tables and RPCs out of the exposed public API schema.
+-- Note: IF NOT EXISTS does not relocate PostGIS already installed in public.
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions;
+-- postgis_topology is intentionally omitted; this application uses core PostGIS only.
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS ltree;          -- Materialized path for hierarchy
+CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA extensions; -- Materialized path for hierarchy
 
 -- -----------------------------------------------------------------------------
 -- ENUMS
@@ -89,7 +93,7 @@ CREATE TABLE leaders (
   first_name      TEXT NOT NULL,
   last_name       TEXT NOT NULL,
   role            leader_role NOT NULL,
-  phone_number    TEXT,                                 -- Stored encrypted / masked at app layer
+  phone_number    TEXT,                                 -- Personal data; API masks it and gates raw access server-side
   email           TEXT,
   photo_url       TEXT,
   valid_from      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -132,8 +136,7 @@ CREATE TABLE admin_profiles (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_login_at   TIMESTAMPTZ,
 
-  CONSTRAINT admin_scope_format CHECK (scope_code ~ '^RW(-[0-9A-Z]{2,})*$')
-);
+  CONSTRAINT admin_scope_format CHECK (scope_code ~ '^RW(-[0-9A-Z]{2,})*);
 
 CREATE INDEX idx_admin_profiles_scope ON admin_profiles (scope_code);
 
@@ -158,6 +161,31 @@ CREATE TABLE audit_logs (
 CREATE INDEX idx_audit_logs_actor ON audit_logs (actor_id);
 CREATE INDEX idx_audit_logs_table_record ON audit_logs (table_name, record_id);
 CREATE INDEX idx_audit_logs_created ON audit_logs (created_at DESC);
+
+-- ----------------------------------------------------------------------------- 
+-- INACTIVE NUMBER REPORTS (citizen submissions; server-mediated access only)
+-- -----------------------------------------------------------------------------
+CREATE TABLE inactive_number_reports (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  leader_id       TEXT NOT NULL CHECK (length(leader_id) BETWEEN 1 AND 100),
+  leader_name     TEXT NOT NULL CHECK (length(leader_name) BETWEEN 1 AND 160),
+  reported_phone  TEXT NOT NULL CHECK (length(reported_phone) BETWEEN 1 AND 32),
+  boundary_name   TEXT NOT NULL CHECK (length(boundary_name) BETWEEN 1 AND 200),
+  citizen_comment TEXT CHECK (citizen_comment IS NULL OR length(citizen_comment) <= 300),
+  status          TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'resolved', 'dismissed')),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at     TIMESTAMPTZ,
+  resolved_by     UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  CONSTRAINT inactive_number_report_resolution_consistency CHECK (
+    (status = 'pending' AND resolved_at IS NULL)
+    OR (status IN ('resolved', 'dismissed') AND resolved_at IS NOT NULL)
+  )
+);
+CREATE INDEX idx_inactive_number_reports_status_created
+  ON inactive_number_reports (status, created_at DESC);
+CREATE INDEX idx_inactive_number_reports_leader ON inactive_number_reports (leader_id);
+
 
 -- -----------------------------------------------------------------------------
 -- HELPER FUNCTIONS
@@ -189,11 +217,19 @@ CREATE OR REPLACE FUNCTION check_version(
   p_table TEXT,
   p_id UUID,
   p_expected_version INTEGER
-) RETURNS BOOLEAN AS $$
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, extensions
+AS $$
 DECLARE
   current_version INTEGER;
 BEGIN
-  EXECUTE format('SELECT version FROM %I WHERE id = $1', p_table)
+  IF p_table NOT IN ('leaders', 'boundaries') THEN
+    RAISE EXCEPTION 'Unsupported table for version check';
+  END IF;
+
+  EXECUTE format('SELECT version FROM public.%I WHERE id = $1', p_table)
     INTO current_version
     USING p_id;
 
@@ -207,7 +243,10 @@ BEGIN
 
   RETURN true;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.check_version(TEXT, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.check_version(TEXT, UUID, INTEGER) TO service_role;
 
 -- -----------------------------------------------------------------------------
 -- ROW LEVEL SECURITY (RLS)
@@ -216,6 +255,48 @@ ALTER TABLE boundaries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE leaders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admin_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inactive_number_reports ENABLE ROW LEVEL SECURITY;
+CREATE POLICY inactive_number_reports_deny_browser_access
+  ON inactive_number_reports
+  FOR ALL
+  TO anon, authenticated
+  USING (false)
+  WITH CHECK (false);
+
+-- Avoid recursive admin_profiles RLS policies by checking the current user's
+-- profile inside a narrowly scoped SECURITY DEFINER helper.
+CREATE OR REPLACE FUNCTION public.is_current_user_super_admin()
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $adminfn$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.admin_profiles AS ap
+    WHERE ap.user_id = auth.uid()
+      AND ap.is_super_admin IS TRUE
+  );
+$adminfn$;
+
+CREATE OR REPLACE FUNCTION public.current_user_admin_scope()
+RETURNS TEXT
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $adminscope$
+  SELECT ap.scope_code
+  FROM public.admin_profiles AS ap
+  WHERE ap.user_id = auth.uid()
+  LIMIT 1;
+$adminscope$;
+
+REVOKE ALL ON FUNCTION public.is_current_user_super_admin() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.current_user_admin_scope() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_current_user_super_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.current_user_admin_scope() TO authenticated;
 
 -- BOUNDARIES: Public read (anonymous citizens)
 CREATE POLICY "boundaries_public_read"
@@ -228,16 +309,10 @@ CREATE POLICY "boundaries_super_admin_write"
   ON boundaries FOR ALL
   TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   );
 
 -- LEADERS: Public read of currently active leaders only
@@ -251,49 +326,30 @@ CREATE POLICY "leaders_scoped_admin_write"
   ON leaders FOR ALL
   TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid()
-        AND (
-          ap.is_super_admin = true
-          OR leaders.scope_code LIKE ap.scope_code || '%'
-        )
-    )
+    public.is_current_user_super_admin()
+    OR leaders.scope_code = public.current_user_admin_scope()
+    OR leaders.scope_code LIKE public.current_user_admin_scope() || '-%'
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid()
-        AND (
-          ap.is_super_admin = true
-          OR leaders.scope_code LIKE ap.scope_code || '%'
-        )
-    )
+    public.is_current_user_super_admin()
+    OR leaders.scope_code = public.current_user_admin_scope()
+    OR leaders.scope_code LIKE public.current_user_admin_scope() || '-%'
   );
 
 -- ADMIN_PROFILES: Users can read their own profile; super-admin can manage all
 CREATE POLICY "admin_profiles_self_read"
   ON admin_profiles FOR SELECT
   TO authenticated
-  USING (user_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM admin_profiles ap
-    WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-  ));
+  USING (user_id = auth.uid() OR public.is_current_user_super_admin());
 
 CREATE POLICY "admin_profiles_super_admin_write"
   ON admin_profiles FOR ALL
   TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   );
 
 -- AUDIT_LOGS: Only super-admin can read
@@ -301,10 +357,7 @@ CREATE POLICY "audit_logs_super_admin_read"
   ON audit_logs FOR SELECT
   TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM admin_profiles ap
-      WHERE ap.user_id = auth.uid() AND ap.is_super_admin = true
-    )
+    public.is_current_user_super_admin()
   );
 
 -- Insert into audit_logs is done via SECURITY DEFINER functions only
@@ -357,7 +410,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public, extensions
 AS $$
   WITH circle AS (
     SELECT ST_Buffer(
@@ -404,8 +457,10 @@ AS $$
   ORDER BY confidence DESC;
 $$;
 
-GRANT EXECUTE ON FUNCTION calculate_location_confidence(DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION)
-  TO anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.calculate_location_confidence(DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.calculate_location_confidence(DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION)
+  TO service_role;
 
 -- -----------------------------------------------------------------------------
 -- BOUNDARY INGEST HELPER (used by scripts/ingest-boundaries.ts)
@@ -422,7 +477,7 @@ CREATE OR REPLACE FUNCTION ingest_boundary_feature(
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public, extensions
 AS $$
 DECLARE
   v_geom geometry;
@@ -466,7 +521,9 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
+REVOKE EXECUTE ON FUNCTION public.ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
   TO service_role;
 
 
@@ -479,7 +536,7 @@ CREATE OR REPLACE FUNCTION ingest_boundary_batch(p_features JSONB)
 RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = pg_catalog, public, extensions
 AS $$
 DECLARE
   v_village_count INTEGER := 0;
@@ -611,6 +668,20 @@ BEGIN
     WHERE cell_scope_code IS NOT NULL AND cell_name IS NOT NULL
       AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
     GROUP BY cell_scope_code, cell_name
+
+    UNION ALL
+
+    -- Country geometry is dissolved incrementally from the same official
+    -- village polygons; repeated batches are merged by the upsert below.
+    SELECT
+      'RW',
+      'RW',
+      'u Rwanda',
+      'Rwanda',
+      'country'::boundary_level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+    FROM normalized
+    WHERE polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
   )
   INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
   SELECT scope_code, path::ltree, name_kiny, name_eng, level, geom
@@ -627,20 +698,740 @@ BEGIN
     updated_at = now(),
     version = boundaries.version + 1;
 
-  RETURN v_village_count;
-END;
-$$;
+  -- Materialize parent_id links across the complete administrative hierarchy.
+  -- The parent is the preceding, hyphen-delimited scope-code segment.
+  UPDATE public.boundaries AS child
+  SET parent_id = parent.id
+  FROM public.boundaries AS parent
+  WHERE child.scope_code <> 'RW'
+    AND parent.scope_code = regexp_replace(child.scope_code, '-[^-]+
 
-GRANT EXECUTE ON FUNCTION ingest_boundary_batch(JSONB) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) TO service_role;
 
 
 
 -- -----------------------------------------------------------------------------
 -- GRANTS (Supabase roles)
 -- -----------------------------------------------------------------------------
+-- Untrusted API roles must not be able to create objects in the schema used by
+-- SECURITY DEFINER routines.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, anon, authenticated;
+
+-- Avoid granting EXECUTE on future functions by default.
+-- The project is intended to apply this schema in Supabase SQL Editor as postgres.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated;
+
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
-GRANT SELECT ON boundaries TO anon, authenticated;
-GRANT SELECT ON leaders TO anon, authenticated;
+
+-- Browser clients use the application APIs for boundaries and leaders. The
+-- server uses the service-role key only after performing its own auth checks.
+-- Revoke all base-table privileges so browser roles cannot bypass API controls.
+REVOKE ALL PRIVILEGES ON TABLE boundaries FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE leaders FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE admin_profiles FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE audit_logs FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE inactive_number_reports FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE inactive_number_reports TO service_role;
+
+-- These safe, deliberately restricted read paths are retained where needed.
+GRANT SELECT ON v_active_leaders TO anon, authenticated;
+GRANT SELECT ON admin_profiles TO authenticated;
+GRANT SELECT ON audit_logs TO authenticated;
+
+-- End of schema
+, '')
+    AND child.parent_id IS DISTINCT FROM parent.id;
+
+  RETURN v_village_count;
+END;
+$;
+
+REVOKE EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) TO service_role;
+
+
+
+-- -----------------------------------------------------------------------------
+-- GRANTS (Supabase roles)
+-- -----------------------------------------------------------------------------
+-- Untrusted API roles must not be able to create objects in the schema used by
+-- SECURITY DEFINER routines.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, anon, authenticated;
+
+-- Avoid granting EXECUTE on future functions by default.
+-- The project is intended to apply this schema in Supabase SQL Editor as postgres.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated;
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+
+-- Browser clients use the application APIs for boundaries and leaders. The
+-- server uses the service-role key only after performing its own auth checks.
+-- Revoke all base-table privileges so browser roles cannot bypass API controls.
+REVOKE ALL PRIVILEGES ON TABLE boundaries FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE leaders FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE admin_profiles FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE audit_logs FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE inactive_number_reports FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE inactive_number_reports TO service_role;
+
+-- These safe, deliberately restricted read paths are retained where needed.
+GRANT SELECT ON v_active_leaders TO anon, authenticated;
+GRANT SELECT ON admin_profiles TO authenticated;
+GRANT SELECT ON audit_logs TO authenticated;
+
+-- End of schema
+),
+  CONSTRAINT admin_profiles_national_scope_requires_super_admin
+    CHECK (scope_code <> 'RW' OR is_super_admin IS TRUE)
+);
+
+CREATE INDEX idx_admin_profiles_scope ON admin_profiles (scope_code);
+
+COMMENT ON TABLE admin_profiles IS 'RBAC mapping. District admin with scope_code=RW-01 can only UPDATE leaders where leaders.scope_code LIKE RW-01%';
+
+-- -----------------------------------------------------------------------------
+-- AUDIT LOGS
+-- -----------------------------------------------------------------------------
+CREATE TABLE audit_logs (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  actor_id        UUID REFERENCES auth.users(id),
+  action          audit_action NOT NULL,
+  table_name      TEXT NOT NULL,
+  record_id       UUID,
+  old_data        JSONB,
+  new_data        JSONB,
+  ip_address      INET,
+  user_agent      TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_audit_logs_actor ON audit_logs (actor_id);
+CREATE INDEX idx_audit_logs_table_record ON audit_logs (table_name, record_id);
+CREATE INDEX idx_audit_logs_created ON audit_logs (created_at DESC);
+
+-- ----------------------------------------------------------------------------- 
+-- INACTIVE NUMBER REPORTS (citizen submissions; server-mediated access only)
+-- -----------------------------------------------------------------------------
+CREATE TABLE inactive_number_reports (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  leader_id       TEXT NOT NULL CHECK (length(leader_id) BETWEEN 1 AND 100),
+  leader_name     TEXT NOT NULL CHECK (length(leader_name) BETWEEN 1 AND 160),
+  reported_phone  TEXT NOT NULL CHECK (length(reported_phone) BETWEEN 1 AND 32),
+  boundary_name   TEXT NOT NULL CHECK (length(boundary_name) BETWEEN 1 AND 200),
+  citizen_comment TEXT CHECK (citizen_comment IS NULL OR length(citizen_comment) <= 300),
+  status          TEXT NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'resolved', 'dismissed')),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at     TIMESTAMPTZ,
+  resolved_by     UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  CONSTRAINT inactive_number_report_resolution_consistency CHECK (
+    (status = 'pending' AND resolved_at IS NULL)
+    OR (status IN ('resolved', 'dismissed') AND resolved_at IS NOT NULL)
+  )
+);
+CREATE INDEX idx_inactive_number_reports_status_created
+  ON inactive_number_reports (status, created_at DESC);
+CREATE INDEX idx_inactive_number_reports_leader ON inactive_number_reports (leader_id);
+
+
+-- -----------------------------------------------------------------------------
+-- HELPER FUNCTIONS
+-- -----------------------------------------------------------------------------
+
+-- Updated_at trigger
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_boundaries_updated
+  BEFORE UPDATE ON boundaries
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_leaders_updated
+  BEFORE UPDATE ON leaders
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_admin_profiles_updated
+  BEFORE UPDATE ON admin_profiles
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Optimistic locking helper (call from API before update)
+CREATE OR REPLACE FUNCTION check_version(
+  p_table TEXT,
+  p_id UUID,
+  p_expected_version INTEGER
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, extensions
+AS $$
+DECLARE
+  current_version INTEGER;
+BEGIN
+  IF p_table NOT IN ('leaders', 'boundaries') THEN
+    RAISE EXCEPTION 'Unsupported table for version check';
+  END IF;
+
+  EXECUTE format('SELECT version FROM public.%I WHERE id = $1', p_table)
+    INTO current_version
+    USING p_id;
+
+  IF current_version IS NULL THEN
+    RAISE EXCEPTION 'Record not found';
+  END IF;
+
+  IF current_version <> p_expected_version THEN
+    RETURN false;  -- Caller must return 409 Conflict
+  END IF;
+
+  RETURN true;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.check_version(TEXT, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.check_version(TEXT, UUID, INTEGER) TO service_role;
+
+-- -----------------------------------------------------------------------------
+-- ROW LEVEL SECURITY (RLS)
+-- -----------------------------------------------------------------------------
+ALTER TABLE boundaries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leaders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inactive_number_reports ENABLE ROW LEVEL SECURITY;
+CREATE POLICY inactive_number_reports_deny_browser_access
+  ON inactive_number_reports
+  FOR ALL
+  TO anon, authenticated
+  USING (false)
+  WITH CHECK (false);
+
+-- Avoid recursive admin_profiles RLS policies by checking the current user's
+-- profile inside a narrowly scoped SECURITY DEFINER helper.
+CREATE OR REPLACE FUNCTION public.is_current_user_super_admin()
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $adminfn$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.admin_profiles AS ap
+    WHERE ap.user_id = auth.uid()
+      AND ap.is_super_admin IS TRUE
+  );
+$adminfn$;
+
+CREATE OR REPLACE FUNCTION public.current_user_admin_scope()
+RETURNS TEXT
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $adminscope$
+  SELECT ap.scope_code
+  FROM public.admin_profiles AS ap
+  WHERE ap.user_id = auth.uid()
+  LIMIT 1;
+$adminscope$;
+
+REVOKE ALL ON FUNCTION public.is_current_user_super_admin() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.current_user_admin_scope() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_current_user_super_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.current_user_admin_scope() TO authenticated;
+
+-- BOUNDARIES: Public read (anonymous citizens)
+CREATE POLICY "boundaries_public_read"
+  ON boundaries FOR SELECT
+  TO anon, authenticated
+  USING (valid_to IS NULL);
+
+-- BOUNDARIES: Only super-admin can write (MVP; future: scoped)
+CREATE POLICY "boundaries_super_admin_write"
+  ON boundaries FOR ALL
+  TO authenticated
+  USING (
+    public.is_current_user_super_admin()
+  )
+  WITH CHECK (
+    public.is_current_user_super_admin()
+  );
+
+-- LEADERS: Public read of currently active leaders only
+CREATE POLICY "leaders_public_read"
+  ON leaders FOR SELECT
+  TO anon, authenticated
+  USING (valid_to IS NULL);
+
+-- LEADERS: Scoped admin write (prefix match on scope_code)
+CREATE POLICY "leaders_scoped_admin_write"
+  ON leaders FOR ALL
+  TO authenticated
+  USING (
+    public.is_current_user_super_admin()
+    OR leaders.scope_code = public.current_user_admin_scope()
+    OR leaders.scope_code LIKE public.current_user_admin_scope() || '-%'
+  )
+  WITH CHECK (
+    public.is_current_user_super_admin()
+    OR leaders.scope_code = public.current_user_admin_scope()
+    OR leaders.scope_code LIKE public.current_user_admin_scope() || '-%'
+  );
+
+-- ADMIN_PROFILES: Users can read their own profile; super-admin can manage all
+CREATE POLICY "admin_profiles_self_read"
+  ON admin_profiles FOR SELECT
+  TO authenticated
+  USING (user_id = auth.uid() OR public.is_current_user_super_admin());
+
+CREATE POLICY "admin_profiles_super_admin_write"
+  ON admin_profiles FOR ALL
+  TO authenticated
+  USING (
+    public.is_current_user_super_admin()
+  )
+  WITH CHECK (
+    public.is_current_user_super_admin()
+  );
+
+-- AUDIT_LOGS: Only super-admin can read
+CREATE POLICY "audit_logs_super_admin_read"
+  ON audit_logs FOR SELECT
+  TO authenticated
+  USING (
+    public.is_current_user_super_admin()
+  );
+
+-- Insert into audit_logs is done via SECURITY DEFINER functions only
+CREATE POLICY "audit_logs_no_direct_write"
+  ON audit_logs FOR INSERT
+  TO authenticated
+  WITH CHECK (false);
+
+-- -----------------------------------------------------------------------------
+-- USEFUL VIEWS
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_active_leaders AS
+SELECT
+  l.id,
+  l.scope_code,
+  b.name_kiny AS boundary_name_kiny,
+  b.name_eng  AS boundary_name_eng,
+  b.level,
+  l.first_name,
+  l.last_name,
+  l.role,
+  l.email,
+  l.photo_url,
+  l.valid_from,
+  l.version
+FROM leaders l
+JOIN boundaries b ON b.scope_code = l.scope_code
+WHERE l.valid_to IS NULL
+  AND b.valid_to IS NULL;
+
+COMMENT ON VIEW v_active_leaders IS 'Active leaders joined with boundary names. Phone numbers intentionally excluded.';
+
+-- -----------------------------------------------------------------------------
+-- GEOSPATIAL CONFIDENCE FUNCTION (used by /api/locate)
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION calculate_location_confidence(
+  p_lng DOUBLE PRECISION,
+  p_lat DOUBLE PRECISION,
+  p_accuracy_m DOUBLE PRECISION
+)
+RETURNS TABLE (
+  scope_code TEXT,
+  name_kiny TEXT,
+  name_eng TEXT,
+  level boundary_level,
+  confidence NUMERIC,
+  intersection_area_m2 DOUBLE PRECISION,
+  path LTREE
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, extensions
+AS $$
+  WITH circle AS (
+    SELECT ST_Buffer(
+      ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography,
+      p_accuracy_m
+    )::geometry AS geom,
+    ST_Area(
+      ST_Buffer(
+        ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography,
+        p_accuracy_m
+      )
+    ) AS area_m2
+  ),
+  intersections AS (
+    SELECT
+      b.scope_code,
+      b.name_kiny,
+      b.name_eng,
+      b.level,
+      b.path,
+      ST_Area(
+        ST_Intersection(b.geom::geography, c.geom::geography)
+      ) AS inter_area_m2,
+      c.area_m2 AS circle_area_m2
+    FROM boundaries b
+    CROSS JOIN circle c
+    WHERE b.valid_to IS NULL
+      AND b.level = 'village'
+      AND ST_Intersects(b.geom, c.geom)
+  )
+  SELECT
+    i.scope_code,
+    i.name_kiny,
+    i.name_eng,
+    i.level,
+    ROUND(
+      (LEAST(i.inter_area_m2 / NULLIF(i.circle_area_m2, 0), 1.0) * 100)::numeric,
+      2
+    ) AS confidence,
+    i.inter_area_m2 AS intersection_area_m2,
+    i.path
+  FROM intersections i
+  WHERE i.inter_area_m2 > 0
+  ORDER BY confidence DESC;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.calculate_location_confidence(DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.calculate_location_confidence(DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION)
+  TO service_role;
+
+-- -----------------------------------------------------------------------------
+-- BOUNDARY INGEST HELPER (used by scripts/ingest-boundaries.ts)
+-- Applies ST_MakeValid + forces SRID 4326
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION ingest_boundary_feature(
+  p_scope_code TEXT,
+  p_path       TEXT,
+  p_name_kiny  TEXT,
+  p_name_eng   TEXT,
+  p_level      TEXT,
+  p_wkt        TEXT
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, extensions
+AS $$
+DECLARE
+  v_geom geometry;
+  v_id   UUID;
+BEGIN
+  -- Parse WKT, force 4326, make valid, and cast to MultiPolygon
+  v_geom := ST_Multi(
+    ST_CollectionExtract(
+      ST_MakeValid(
+        ST_SetSRID(ST_GeomFromText(p_wkt), 4326)
+      ),
+      3  -- extract polygonal geometries
+    )
+  );
+
+  IF v_geom IS NULL OR ST_IsEmpty(v_geom) THEN
+    RAISE EXCEPTION 'Invalid or empty geometry for scope_code %', p_scope_code;
+  END IF;
+
+  INSERT INTO boundaries (
+    scope_code, path, name_kiny, name_eng, level, geom
+  ) VALUES (
+    p_scope_code,
+    p_path::ltree,
+    p_name_kiny,
+    p_name_eng,
+    p_level::boundary_level,
+    v_geom
+  )
+  ON CONFLICT (scope_code) DO UPDATE SET
+    path       = EXCLUDED.path,
+    name_kiny  = EXCLUDED.name_kiny,
+    name_eng   = EXCLUDED.name_eng,
+    level      = EXCLUDED.level,
+    geom       = EXCLUDED.geom,
+    updated_at = now(),
+    version    = boundaries.version + 1
+  RETURNING id INTO v_id;
+
+  RETURN v_id;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
+  TO service_role;
+
+
+-- -----------------------------------------------------------------------------
+-- NATIONWIDE BATCH INGEST (used by scripts/ingest-boundaries.ts)
+-- Inserts village polygons and incrementally dissolves them into parent
+-- cell/sector/district boundaries. Re-running is safe (idempotent upsert).
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION ingest_boundary_batch(p_features JSONB)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, extensions
+AS $$
+DECLARE
+  v_village_count INTEGER := 0;
+BEGIN
+  IF jsonb_typeof(p_features) <> 'array' THEN
+    RAISE EXCEPTION 'p_features must be a JSON array';
+  END IF;
+
+  -- Upsert the village polygons after validating/fixing geometry.
+  WITH parsed AS (
+    SELECT *
+    FROM jsonb_to_recordset(p_features) AS x(
+      scope_code TEXT,
+      path TEXT,
+      name_kiny TEXT,
+      name_eng TEXT,
+      level TEXT,
+      geom JSONB,
+      province_scope_code TEXT,
+      province_name TEXT,
+      province_name_eng TEXT,
+      district_scope_code TEXT,
+      district_name TEXT,
+      sector_scope_code TEXT,
+      sector_name TEXT,
+      cell_scope_code TEXT,
+      cell_name TEXT
+    )
+  ),
+  normalized AS (
+    SELECT p.*,
+      ST_Multi(ST_CollectionExtract(
+        ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3
+      )) AS polygon_geom
+    FROM parsed p
+    WHERE p.geom IS NOT NULL
+  )
+  INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
+  SELECT scope_code, path::ltree, name_kiny, name_eng, level::boundary_level, polygon_geom
+  FROM normalized
+  WHERE scope_code IS NOT NULL
+    AND path IS NOT NULL
+    AND name_kiny IS NOT NULL
+    AND polygon_geom IS NOT NULL
+    AND NOT ST_IsEmpty(polygon_geom)
+  ON CONFLICT (scope_code) DO UPDATE SET
+    path = EXCLUDED.path,
+    name_kiny = EXCLUDED.name_kiny,
+    name_eng = EXCLUDED.name_eng,
+    level = EXCLUDED.level,
+    geom = EXCLUDED.geom,
+    updated_at = now(),
+    version = boundaries.version + 1;
+
+  GET DIAGNOSTICS v_village_count = ROW_COUNT;
+
+  -- Build dissolved parent polygons from the same village features. When a
+  -- parent appears in a later batch, union the new batch with its stored shape.
+  WITH parsed AS (
+    SELECT *
+    FROM jsonb_to_recordset(p_features) AS x(
+      scope_code TEXT, path TEXT, name_kiny TEXT, name_eng TEXT, level TEXT,
+      geom JSONB,
+      province_scope_code TEXT, province_name TEXT, province_name_eng TEXT,
+      district_scope_code TEXT, district_name TEXT,
+      sector_scope_code TEXT, sector_name TEXT,
+      cell_scope_code TEXT, cell_name TEXT
+    )
+  ),
+  normalized AS (
+    SELECT p.*,
+      ST_Multi(ST_CollectionExtract(
+        ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(p.geom::text), 4326)), 3
+      )) AS polygon_geom
+    FROM parsed p
+    WHERE p.geom IS NOT NULL
+  ),
+  parent_rows AS (
+    SELECT
+      province_scope_code AS scope_code,
+      replace(province_scope_code, '-', '.') AS path,
+      province_name AS name_kiny,
+      province_name_eng AS name_eng,
+      'province'::boundary_level AS level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3)) AS geom
+    FROM normalized
+    WHERE province_scope_code IS NOT NULL AND province_name IS NOT NULL
+      AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+    GROUP BY province_scope_code, province_name, province_name_eng
+
+    UNION ALL
+
+    SELECT
+      district_scope_code,
+      replace(district_scope_code, '-', '.'),
+      district_name,
+      district_name,
+      'district'::boundary_level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+    FROM normalized
+    WHERE district_scope_code IS NOT NULL AND district_name IS NOT NULL
+      AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+    GROUP BY district_scope_code, district_name
+
+    UNION ALL
+
+    SELECT
+      sector_scope_code,
+      replace(sector_scope_code, '-', '.'),
+      sector_name,
+      sector_name,
+      'sector'::boundary_level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+    FROM normalized
+    WHERE sector_scope_code IS NOT NULL AND sector_name IS NOT NULL
+      AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+    GROUP BY sector_scope_code, sector_name
+
+    UNION ALL
+
+    SELECT
+      cell_scope_code,
+      replace(cell_scope_code, '-', '.'),
+      cell_name,
+      cell_name,
+      'cell'::boundary_level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+    FROM normalized
+    WHERE cell_scope_code IS NOT NULL AND cell_name IS NOT NULL
+      AND polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+    GROUP BY cell_scope_code, cell_name
+
+    UNION ALL
+
+    -- Country geometry is dissolved incrementally from the same official
+    -- village polygons; repeated batches are merged by the upsert below.
+    SELECT
+      'RW',
+      'RW',
+      'u Rwanda',
+      'Rwanda',
+      'country'::boundary_level,
+      ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(polygon_geom))), 3))
+    FROM normalized
+    WHERE polygon_geom IS NOT NULL AND NOT ST_IsEmpty(polygon_geom)
+  )
+  INSERT INTO boundaries (scope_code, path, name_kiny, name_eng, level, geom)
+  SELECT scope_code, path::ltree, name_kiny, name_eng, level, geom
+  FROM parent_rows
+  WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
+  ON CONFLICT (scope_code) DO UPDATE SET
+    path = EXCLUDED.path,
+    name_kiny = EXCLUDED.name_kiny,
+    name_eng = EXCLUDED.name_eng,
+    level = EXCLUDED.level,
+    geom = ST_Multi(ST_CollectionExtract(
+      ST_MakeValid(ST_UnaryUnion(ST_Collect(boundaries.geom, EXCLUDED.geom))), 3
+    )),
+    updated_at = now(),
+    version = boundaries.version + 1;
+
+  -- Materialize parent_id links across the complete administrative hierarchy.
+  -- The parent is the preceding, hyphen-delimited scope-code segment.
+  UPDATE public.boundaries AS child
+  SET parent_id = parent.id
+  FROM public.boundaries AS parent
+  WHERE child.scope_code <> 'RW'
+    AND parent.scope_code = regexp_replace(child.scope_code, '-[^-]+
+
+REVOKE EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) TO service_role;
+
+
+
+-- -----------------------------------------------------------------------------
+-- GRANTS (Supabase roles)
+-- -----------------------------------------------------------------------------
+-- Untrusted API roles must not be able to create objects in the schema used by
+-- SECURITY DEFINER routines.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, anon, authenticated;
+
+-- Avoid granting EXECUTE on future functions by default.
+-- The project is intended to apply this schema in Supabase SQL Editor as postgres.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated;
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+
+-- Browser clients use the application APIs for boundaries and leaders. The
+-- server uses the service-role key only after performing its own auth checks.
+-- Revoke all base-table privileges so browser roles cannot bypass API controls.
+REVOKE ALL PRIVILEGES ON TABLE boundaries FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE leaders FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE admin_profiles FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE audit_logs FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE inactive_number_reports FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE inactive_number_reports TO service_role;
+
+-- These safe, deliberately restricted read paths are retained where needed.
+GRANT SELECT ON v_active_leaders TO anon, authenticated;
+GRANT SELECT ON admin_profiles TO authenticated;
+GRANT SELECT ON audit_logs TO authenticated;
+
+-- End of schema
+, '')
+    AND child.parent_id IS DISTINCT FROM parent.id;
+
+  RETURN v_village_count;
+END;
+$;
+
+REVOKE EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.ingest_boundary_batch(JSONB) TO service_role;
+
+
+
+-- -----------------------------------------------------------------------------
+-- GRANTS (Supabase roles)
+-- -----------------------------------------------------------------------------
+-- Untrusted API roles must not be able to create objects in the schema used by
+-- SECURITY DEFINER routines.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, anon, authenticated;
+
+-- Avoid granting EXECUTE on future functions by default.
+-- The project is intended to apply this schema in Supabase SQL Editor as postgres.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM anon, authenticated;
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+
+-- Browser clients use the application APIs for boundaries and leaders. The
+-- server uses the service-role key only after performing its own auth checks.
+-- Revoke all base-table privileges so browser roles cannot bypass API controls.
+REVOKE ALL PRIVILEGES ON TABLE boundaries FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE leaders FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE admin_profiles FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE audit_logs FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE inactive_number_reports FROM anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE inactive_number_reports TO service_role;
+
+-- These safe, deliberately restricted read paths are retained where needed.
 GRANT SELECT ON v_active_leaders TO anon, authenticated;
 GRANT SELECT ON admin_profiles TO authenticated;
 GRANT SELECT ON audit_logs TO authenticated;
