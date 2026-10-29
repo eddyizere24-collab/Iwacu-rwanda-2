@@ -22,6 +22,7 @@ const LocateBodySchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   accuracy: z.number().positive().max(50_000),
+  method: z.enum(["gps", "map"]).optional().default("gps"),
 });
 
 interface RpcRow {
@@ -69,7 +70,7 @@ export async function POST(
       );
     }
 
-    const { latitude, longitude, accuracy } = parsed.data;
+    const { latitude, longitude, accuracy, method } = parsed.data;
 
     if (!isSupabasePublicConfigured()) {
       // No database is configured: resolve against the official national NISR
@@ -103,7 +104,7 @@ export async function POST(
         !lowerName.includes("sample village");
     });
 
-    const matches: ConfidenceMatch[] = realRows.map((r) => ({
+    let matches: ConfidenceMatch[] = realRows.map((r) => ({
       scope_code: r.scope_code,
       name_kiny: r.name_kiny,
       name_eng: r.name_eng,
@@ -119,20 +120,32 @@ export async function POST(
       return respondWithOfficialFallback(latitude, longitude, accuracy);
     }
 
-    // The SQL function returns top intersecting matches or nearest-village estimates.
-    matches.sort((a, b) => b.confidence - a.confidence);
-    matches.splice(3);
-
-    // Normalise overlapping percentages so they sum ≈ 100
-    if (matches.length > 1) {
-      const total = matches.reduce((s, m) => s + m.confidence, 0);
-      if (total > 100) {
-        for (const m of matches) {
-          m.confidence =
-            Math.round((m.confidence / total) * 10000) / 100;
-        }
+    // Keep raw overlap scores intact; they are geometric overlap scores, not
+    // calibrated probabilities. Use coarse IP geography only as a weak
+    // district-level prior for GPS results, never as the sole location source.
+    if (method === "gps" && matches.length > 1) {
+      const ipPrior = await getIpDistrictPrior(req, supabase);
+      if (ipPrior.size > 0) {
+        const totalGps = matches.reduce((sum, item) => sum + Math.max(item.confidence, 0), 0);
+        const ranked = matches.map((item) => {
+          const parts = item.scope_code.split("-");
+          const districtCode = parts.length >= 3 ? parts.slice(0, 3).join("-") : "";
+          const gpsShare = totalGps > 0 ? Math.max(item.confidence, 0) / totalGps : 0;
+          const ipShare = ipPrior.get(districtCode) ?? 0;
+          return {
+            item,
+            rankScore: (gpsShare * 0.85) + (ipShare * 0.15),
+          };
+        });
+        ranked.sort((a, b) => b.rankScore - a.rankScore);
+        matches = ranked.map((entry) => entry.item);
+      } else {
+        matches.sort((a, b) => b.confidence - a.confidence);
       }
+    } else {
+      matches.sort((a, b) => b.confidence - a.confidence);
     }
+    matches.splice(3);
 
     // --- Point in overlap flag (informational, still success) ---
     const isOverlap = matches.length > 1 && matches[1].confidence > 5;
@@ -150,7 +163,7 @@ export async function POST(
       matches,
       hierarchy,
       leaders,
-      source: isNearestEstimate ? "nearest" : "gps",
+      source: isNearestEstimate ? "nearest" : method,
     };
 
     if (isNearestEstimate) {
@@ -326,6 +339,65 @@ async function respondWithOfficialFallback(
           ? 422
           : 400;
   return NextResponse.json(result, { status });
+}
+
+
+
+/**
+ * Convert Vercel's IP geolocation into a weak district-only prior. IP data is
+ * not precise enough to select a village and is never returned to the browser.
+ * No IP address or IP-derived coordinates are stored.
+ */
+async function getIpDistrictPrior(
+  req: NextRequest,
+  supabase: ReturnType<typeof createSupabasePublicClient>
+): Promise<Map<string, number>> {
+  const headers = req.headers;
+  if (headers.get("x-vercel-ip-country") !== "RW") return new Map();
+
+  const latitude = Number(headers.get("x-vercel-ip-latitude"));
+  const longitude = Number(headers.get("x-vercel-ip-longitude"));
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return new Map();
+
+  // Only consider IP hints in Rwanda. Use a wide radius so it remains a district
+  // prior rather than pretending IP geolocation identifies the person's village.
+  if (longitude < 28.85 || longitude > 30.9 || latitude < -2.85 || latitude > -1.05) {
+    return new Map();
+  }
+
+  try {
+    const { data, error } = await supabase.rpc("calculate_location_confidence", {
+      p_lng: longitude,
+      p_lat: latitude,
+      p_accuracy_m: 15_000,
+    });
+    if (error || !Array.isArray(data)) {
+      if (error) console.warn("[locate] IP district prior unavailable:", error.message);
+      return new Map();
+    }
+
+    const totals = new Map<string, number>();
+    for (const row of data as RpcRow[]) {
+      const lowerName = (row.name_kiny ?? "").toLowerCase();
+      if (
+        row.scope_code === "RW-01-01-01-001" ||
+        lowerName.includes("umudugudu w'urugero") ||
+        lowerName.includes("sample village")
+      ) continue;
+
+      const parts = String(row.scope_code).split("-");
+      if (parts.length < 3 || !parts[1]?.startsWith("P") || !parts[2]?.startsWith("D")) continue;
+      const districtCode = parts.slice(0, 3).join("-");
+      totals.set(districtCode, (totals.get(districtCode) ?? 0) + Math.max(Number(row.confidence) || 0, 0));
+    }
+
+    const sum = Array.from(totals.values()).reduce((total, value) => total + value, 0);
+    if (sum <= 0) return new Map();
+    return new Map(Array.from(totals, ([code, value]) => [code, value / sum]));
+  } catch (error) {
+    console.warn("[locate] IP district prior failed:", error);
+    return new Map();
+  }
 }
 
 
