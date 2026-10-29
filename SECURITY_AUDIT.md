@@ -42,10 +42,18 @@ Standard: NCSA Law No. 058/2021 + internal zero-PII policy
 
 ## 6. Authentication & Session
 
-- [x] Citizens remain 100 % anonymous (no login required for public features).
-- [x] Admins use Supabase Auth Magic Link / Email OTP.
-- [x] `shouldCreateUser: false` — only pre-provisioned admins can sign in.
-- [x] Admin dashboard redirects unauthenticated users to `/admin/login`.
+- [x] Public citizen features do not require a citizen login.
+- [x] Admin login calls Supabase Auth `signInWithPassword`; the typed email/password is not accepted as proof by itself.
+- [x] The dashboard checks the signed-in Supabase user and reads the matching `admin_profiles` row before showing admin data.
+- [x] Server-side admin APIs independently validate the Supabase cookie session and database admin profile.
+- [x] Local storage is used only for the selected dashboard view; it is not used as server-side proof of identity.
+- [x] Leader writes and raw-phone reveal check the admin's stored scope on the server.
+- [x] Report listing/resolution is restricted to super-admins until reports store a canonical scope code.
+- [ ] Configure Supabase Auth + database environment variables in Vercel and provision real admin users.
+- [ ] Apply `sql/security-hardening-migration.sql` to the existing Supabase database.
+- [ ] Test login, logout, wrong password, non-admin user, cross-scope access, and raw-phone reveal against the configured live database.
+
+**Important:** The live health endpoint was checked during the security review and returned `degraded`; Supabase Auth and database environment variables were missing. Admin operations therefore fail closed until deployment configuration is completed. Code passing a local build does not prove the live database policies have been applied.
 
 ## 7. Additional Hardening
 
