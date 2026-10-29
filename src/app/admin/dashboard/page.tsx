@@ -206,7 +206,11 @@ export default function AdminDashboardPage() {
         const profileScope = profile.scope_code;
         const validScope = /^RW(?:-[0-9A-Z]{2,})*$/.test(profileScope);
         const profileDepth = profileScope === "RW" ? 0 : profileScope.split("-").length - 1;
-        if (!validScope || profileDepth > 5) {
+        if (
+          !validScope ||
+          profileDepth > 5 ||
+          (profileScope === "RW" && profile.is_super_admin !== true)
+        ) {
           localStorage.removeItem("iwacu_admin_session");
           await supabase.auth.signOut();
           router.replace("/admin/login");
