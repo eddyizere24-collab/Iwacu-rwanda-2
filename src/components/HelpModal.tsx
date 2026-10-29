@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { X, HelpCircle, Smartphone, Compass, PhoneCall } from "lucide-react";
 
 interface HelpModalProps {
@@ -136,16 +137,24 @@ export function PrivacyModal({
 
         <div className="space-y-3.5 text-xs text-muted-foreground leading-relaxed">
           <p>
-            <strong className="text-foreground">Ntidusaba konti:</strong> Ntidusaba izina, ifoto cyangwa nimero ya telefone yawe.
+            <strong className="text-foreground">Nta konti ikenewe:</strong> Ushobora gushaka ahantu rusange utabanje kwiyandikisha.
           </p>
           <p>
-            <strong className="text-foreground">Aho uri:</strong> Twohereza aho uri gusa kuri seriveri yacu kugira ngo tumenye umudugudu wawe. <strong className="text-foreground">Ntitubika aho wabaye.</strong>
+            <strong className="text-foreground">Aho uri:</strong> Iyo wemeye GPS, amakuru y&apos;aho uri n&apos;urwego GPS yizeweho akoreshwa mu gushaka umudugudu. Mu gihe serivisi isanzwe itabonetse, agace k&apos;ikarita gashobora koherezwa kuri serivisi y&apos;ikarita ya NISR. Ibisobanuro birambuye biri ku rupapuro rw&apos;uburinzi bw&apos;amakuru.
           </p>
           <p>
-            <strong className="text-foreground">Umutekano w&apos;urubuga:</strong> Mu kurinda urubuga gukoreshwa nabi, dukoresha aderesi ya interineti ya telefone yawe mu gihe gito gusa (rate limiting).
+            <strong className="text-foreground">Gushaka ahantu:</strong> Amagambo wanditse ashobora koherezwa kuri NISR kugira ngo ahuzwe n&apos;amazina y&apos;inzego z&apos;ubuyobozi. Verisiyo iriho ntihamagarira AI/LLM.
           </p>
           <p>
-            <strong className="text-foreground">Nimero z&apos;abayobozi:</strong> Zigaragara kuri bose mu rwego rwo korohereza umuturage kugera ku buyobozi, hubahirijwe amategeko y&apos;uburinzi bw&apos;amakuru bwite (NCSA Law No. 058/2021).
+            <strong className="text-foreground">Nimero z&apos;abayobozi:</strong> Zihishwe ku baturage mu buryo rusange kandi hagomba gukoreshwa uburenganzira bw&apos;ubuyobozi kugira ngo hagaragazwe nimero yuzuye. Kugeza ubu, ububiko nta bayobozi bufite bwemejwe bugaragara nk&apos;abariho.
+          </p>
+          <p>
+            Iyi ni ibisobanuro by&apos;uko verisiyo iriho ikora, si icyemezo cy&apos;uko urubuga rwemejwe n&apos;amategeko. Igihe cyo kubika amakuru, uburyo bwo gusaba ko akosorwa cyangwa asibwa, n&apos;aho umuntu yandikira ku bibazo by&apos;ubuzima bwite bigomba kunozwa mbere y&apos;itangizwa rusange.
+          </p>
+          <p>
+            <Link href="/privacy" className="font-semibold underline underline-offset-4 text-foreground">
+              Soma ibisobanuro byose ku burinzi bw&apos;amakuru
+            </Link>
           </p>
         </div>
 
