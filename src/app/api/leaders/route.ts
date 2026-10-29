@@ -240,6 +240,7 @@ export async function PATCH(req: NextRequest) {
       role,
       version: current.version + 1,
       updated_at: new Date().toISOString(),
+      updated_by: gate.admin.userId,
     };
     if (phone_number !== undefined) updatePayload.phone_number = phone_number;
     if (email !== undefined) updatePayload.email = email;
@@ -449,7 +450,7 @@ export async function DELETE(req: NextRequest) {
     const supabase = createSupabaseServiceClient();
     const { data: current, error: fetchError } = await supabase
       .from("leaders")
-      .select("id, scope_code, valid_to")
+      .select("id, scope_code, valid_to, version")
       .eq("id", id)
       .maybeSingle();
 
@@ -474,17 +475,30 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    const { error: updateError } = await supabase
+    const { data: updated, error: updateError } = await supabase
       .from("leaders")
-      .update({ valid_to: new Date().toISOString(), updated_by: gate.admin.userId })
+      .update({
+        valid_to: new Date().toISOString(),
+        updated_by: gate.admin.userId,
+        version: current.version + 1,
+      })
       .eq("id", id)
-      .is("valid_to", null);
+      .eq("version", current.version)
+      .is("valid_to", null)
+      .select("id")
+      .maybeSingle();
 
     if (updateError) {
       console.error("[leaders DELETE] database update failed:", updateError.message);
       return NextResponse.json(
         { status: "error", message_kiny: "Ntibyashobotse guhagarika umuyobozi." },
         { status: 502 }
+      );
+    }
+    if (!updated) {
+      return NextResponse.json(
+        { status: "error", message_kiny: "Amakuru yahindutse ahandi. Ongera ufungure uyu muyobozi mbere yo gukomeza." },
+        { status: 409 }
       );
     }
 
