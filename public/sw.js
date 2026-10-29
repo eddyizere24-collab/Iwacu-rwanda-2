@@ -9,12 +9,25 @@ const SHELL_CACHE = `iwacu-shell-${CACHE_VERSION}`;
 const BOUNDARIES_CACHE = `iwacu-boundaries-${CACHE_VERSION}`;
 const LOCATION_INDEX_CACHE = "iwacu-location-index-v2-2026-10-30";
 const LOCATION_INDEX_URL = "/api/locate?index=1";
+const LOCATION_INDEX_ASSET_URL = "/offline/location-index.json";
 
 // ---------------------------------------------------------------------------
 // Install – Skip waiting immediately
 // ---------------------------------------------------------------------------
 self.addEventListener("install", (event) => {
   self.skipWaiting();
+  event.waitUntil((async () => {
+    // Pre-cache the compact national hierarchy. The 1.6 MB JSON is served
+    // compressed by Vercel and avoids a first-use offline picker dead end.
+    try {
+      const cache = await caches.open(LOCATION_INDEX_CACHE);
+      const assetUrl = new URL(LOCATION_INDEX_ASSET_URL, self.location.origin).toString();
+      const response = await fetch(assetUrl, { cache: "reload" });
+      if (response.ok) await cache.put(new Request(assetUrl), response.clone());
+    } catch {
+      // Installation can still succeed if the asset is temporarily unavailable.
+    }
+  })());
 });
 
 // ---------------------------------------------------------------------------
@@ -72,7 +85,28 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // National location index: keep one compact verified copy for offline picker use.
+  // Offline-first static hierarchy index, prefetched during service-worker install.
+  if (url.pathname === LOCATION_INDEX_ASSET_URL) {
+    event.respondWith((async () => {
+      const cache = await caches.open(LOCATION_INDEX_CACHE);
+      const cacheKey = new Request(new URL(LOCATION_INDEX_ASSET_URL, self.location.origin).toString());
+      const cached = await cache.match(cacheKey);
+      if (cached) return cached;
+      try {
+        const response = await fetch(request);
+        if (response.ok) await cache.put(cacheKey, response.clone());
+        return response;
+      } catch {
+        return new Response(
+          JSON.stringify({ status: "error", message: "National location index is not cached." }),
+          { status: 503, headers: { "Content-Type": "application/json" } }
+        );
+      }
+    })());
+    return;
+  }
+
+  // National location index: keep a refreshed API copy for older app shells.
   if (url.pathname === "/api/locate" && url.searchParams.get("index") === "1") {
     const cachePromise = caches.open(LOCATION_INDEX_CACHE);
     const cacheKey = new Request(new URL(LOCATION_INDEX_URL, self.location.origin).toString());
