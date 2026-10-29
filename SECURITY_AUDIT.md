@@ -8,11 +8,12 @@ Standard: Internal security review; Rwanda legal compliance requires separate le
 - [x] Server-side admin routes require a real Supabase Auth session and a matching admin_profiles record.
 - [x] Old header-token authentication is not accepted as proof of administrator identity.
 - [x] Admin permissions are checked server-side against stored scope and is_super_admin.
+- [x] National root scope (`RW`) now requires `is_super_admin=true` in server authorization and the database constraint; non-super-admin identities cannot inherit access to every descendant from an `RW` prefix.
 - [x] Database schema and security migrations have been applied to the newly created Supabase project; RLS on boundaries, leaders, admin_profiles, and audit_logs was verified.
 - [x] Follow-up migration makes v_active_leaders a security-invoker view and relocates RBAC helper functions to a non-exposed private schema.
 - [x] Browser roles cannot read the leaders.phone_number column; only explicit, non-sensitive leader and boundary columns are granted.
 - [x] Supabase URL, publishable key, preview URL, and default scope are configured for the `security/part-2-auth-hardening` preview branch.
-- [x] The real `SUPABASE_SERVICE_ROLE_KEY` value is retained only on `security/part-2-auth-hardening`. The two unrelated Preview branch variables were changed to `placeholder-disabled`; the Vercel environment list shows no Production-target variable for this key.
+- [ ] Vercel Production environment-variable scope isolation is **not re-verified in this pass**. The connected Vercel tools returned “Project not found” for the known project ID and denied deployment enumeration, so I could not inspect current variable targets. Before launch, a project owner must review Vercel → Project Settings → Environment Variables and confirm that all required variables are set only in their intended environments, that the service-role key is never exposed through any `NEXT_PUBLIC_*` variable, and that no unintended Production secret has been configured. Never share the values in chat.
 - [x] Live Preview smoke tests passed via GitHub Actions: `GET /api/health` returned HTTP 200, unauthenticated `GET /api/leaders?scope_code=RW&reveal=true` returned HTTP 401, and unauthenticated `PATCH /api/leaders` returned HTTP 401.
 - [x] Inactive-number reports now use a durable `inactive_number_reports` table. Browser roles have no table grants and an explicit deny-all RLS policy; list/resolve routes require a verified Supabase Auth super-admin.
 - [x] Created and verified the first real Supabase Auth administrator on 2026-10-29: one Auth user is linked to one `admin_profiles` row with national scope `RW` and `is_super_admin=true`; the Auth email is confirmed. No credentials were read or exposed.
