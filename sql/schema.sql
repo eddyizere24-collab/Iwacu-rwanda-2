@@ -257,6 +257,12 @@ ALTER TABLE leaders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE admin_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inactive_number_reports ENABLE ROW LEVEL SECURITY;
+CREATE POLICY inactive_number_reports_deny_browser_access
+  ON inactive_number_reports
+  FOR ALL
+  TO anon, authenticated
+  USING (false)
+  WITH CHECK (false);
 
 -- Avoid recursive admin_profiles RLS policies by checking the current user's
 -- profile inside a narrowly scoped SECURITY DEFINER helper.
