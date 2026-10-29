@@ -120,3 +120,50 @@ SELECT
   COUNT(DISTINCT i) FILTER (WHERE candidate_scope_code IS NULL) AS points_without_candidate,
   COUNT(DISTINCT i) FILTER (WHERE candidate_scope_code IS NOT NULL AND intersection_area_m2 = 0) AS points_using_nearest_fallback
 FROM gap_predictions;
+
+-- Explicit Lake Kivu / border probes. Coordinates are representative test points,
+-- not authoritative surveyed shoreline marks. A location with no containing
+-- village must return nearest real village candidates and mark them as estimates.
+WITH points(name, geom) AS (
+  VALUES
+    ('Gisenyi shore A', ST_SetSRID(ST_MakePoint(29.25, -1.68), 4326)),
+    ('Gisenyi shore B', ST_SetSRID(ST_MakePoint(29.28, -1.70), 4326)),
+    ('Rubavu shore C', ST_SetSRID(ST_MakePoint(29.30, -1.72), 4326)),
+    ('Kivu lake sample', ST_SetSRID(ST_MakePoint(29.20, -1.75), 4326)),
+    ('Kivu south shore sample', ST_SetSRID(ST_MakePoint(29.35, -2.10), 4326)),
+    ('Kigali control', ST_SetSRID(ST_MakePoint(30.0619, -1.9441), 4326))
+),
+probes AS (
+  SELECT
+    p.name,
+    ST_Covers(c.geom, p.geom) AS inside_country,
+    EXISTS (
+      SELECT 1 FROM public.boundaries AS v
+      WHERE v.level = 'village'
+        AND v.valid_to IS NULL
+        AND v.geom IS NOT NULL
+        AND ST_Covers(v.geom, p.geom)
+    ) AS inside_village,
+    r.scope_code,
+    r.name_kiny,
+    r.confidence,
+    r.intersection_area_m2
+  FROM points AS p
+  CROSS JOIN (
+    SELECT geom FROM public.boundaries
+    WHERE level = 'country' AND valid_to IS NULL LIMIT 1
+  ) AS c
+  LEFT JOIN LATERAL public.calculate_location_confidence(
+    ST_X(p.geom), ST_Y(p.geom), 100
+  ) AS r ON TRUE
+)
+SELECT
+  name,
+  inside_country,
+  inside_village,
+  COUNT(scope_code) AS candidates_returned,
+  COUNT(scope_code) FILTER (WHERE intersection_area_m2 = 0) AS nearest_estimate_candidates,
+  (array_agg(name_kiny ORDER BY confidence DESC) FILTER (WHERE scope_code IS NOT NULL))[1] AS top_candidate
+FROM probes
+GROUP BY name, inside_country, inside_village
+ORDER BY name;
