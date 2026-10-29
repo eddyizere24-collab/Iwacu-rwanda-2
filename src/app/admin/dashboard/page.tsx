@@ -224,7 +224,8 @@ export default function AdminDashboardPage() {
               profile.is_super_admin === true ||
               requested === profileScope ||
               (profileScope !== "RW" && requested.startsWith(profileScope + "-"));
-            if (/^RW(?:-[0-9A-Z]{2,})*$/.test(requested) && allowed) {
+            const requestedDepth = requested === "RW" ? 0 : requested.split("-").length - 1;
+            if (/^RW(?:-[0-9A-Z]{2,})*$/.test(requested) && requestedDepth <= 4 && allowed) {
               preferredScope = requested;
               preferredName = typeof parsed.scope_name === "string" ? parsed.scope_name : requested;
             }
