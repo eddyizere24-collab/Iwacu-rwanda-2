@@ -61,3 +61,13 @@ Keep this PR in draft and do not merge/promote to Production until:
 - the Production URL and all paired public/service-role credentials are confirmed to belong to `buexgewxypvkqmphvfec`, and Supabase integration auto-sync is addressed;
 - offline, low-end-phone, and cross-district real-world tests are completed;
 - the final limitations are reviewed and the owner approves release.
+
+## Supabase RLS / security advisor check (2026-10-30)
+The current populated project has RLS enabled on `boundaries`, `leaders`, `admin_profiles`, `audit_logs`, `inactive_number_reports`, and both retained backup tables. The main boundary read policy, `boundaries_public_read`, allows anonymous/authenticated reads only of active records (or super-admin access); writes have separate admin policies. The browser-facing `inactive_number_reports` policy denies direct browser-role access. `leaders.phone_number` is not readable directly by anonymous/authenticated roles.
+
+The Supabase Security Advisor still reports:
+- **Informational:** `_bak_boundaries_geom` and `_bak_boundaries_meta` have RLS enabled with no policies. Browser table grants are absent, so the lack of policies is not currently a browser-read grant; retain the backups, but keep their grants/policies under review.
+- **Warning:** Auth leaked-password protection is disabled. Enable it if the current Supabase plan supports it; do not weaken password rules to work around the warning.
+
+The location RPC now runs as invoker and is executable by browser roles because it needs to return public location results. It has a fixed search path and only the geometry/path columns needed for the spatial calculation were added as column grants. The RPC does not return personal identifiers or leader contacts. Re-run the Security Advisor after any further grants/migrations.
+
