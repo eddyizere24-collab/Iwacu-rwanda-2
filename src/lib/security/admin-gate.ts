@@ -53,7 +53,7 @@ export async function requireAdminWrite(_req?: NextRequest): Promise<AdminGateRe
 
     const scopeCode = typeof profile.scope_code === "string" ? profile.scope_code : "";
     const scopeDepth = scopeCode === "RW" ? 0 : scopeCode.split("-").length - 1;
-    if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(scopeCode) || scopeDepth > 4) {
+    if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(scopeCode) || scopeDepth > 5) {
       console.error("[admin-gate] invalid admin scope configured for user");
       return denied(403, "Aho konti yawe yemerewe kugenzura ntabwo handitse neza.");
     }
@@ -73,12 +73,13 @@ export async function requireAdminWrite(_req?: NextRequest): Promise<AdminGateRe
 }
 
 /**
- * Scope comparison must respect complete hierarchy segments. For example,
- * RW-01 must not be treated as the parent of RW-010.
+ * Scope comparison respects complete hierarchy segments. Rwanda's hierarchy
+ * contains up to five descendants after RW: province, district, sector, cell,
+ * and village. For example, RW-01 must not be treated as the parent of RW-010.
  */
 export function adminCanManageScope(admin: AdminIdentity, targetScope: string): boolean {
   const targetDepth = targetScope === "RW" ? 0 : targetScope.split("-").length - 1;
-  if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(targetScope) || targetDepth > 4) return false;
+  if (!/^RW(?:-[0-9A-Z]{2,})*$/.test(targetScope) || targetDepth > 5) return false;
   if (admin.isSuperAdmin) return true;
   return targetScope === admin.scopeCode || targetScope.startsWith(`${admin.scopeCode}-`);
 }
