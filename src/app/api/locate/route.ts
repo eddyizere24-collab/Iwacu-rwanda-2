@@ -75,7 +75,7 @@ export async function POST(
     if (!isSupabasePublicConfigured()) {
       // No database is configured: resolve against the official national NISR
       // village polygons rather than returning a fabricated sample village.
-      return respondWithOfficialFallback(latitude, longitude, accuracy);
+      return respondWithOfficialFallback(latitude, longitude, accuracy, method);
     }
 
     const supabase = createSupabasePublicClient();
@@ -323,22 +323,27 @@ async function fetchLeadersMasked(
 async function respondWithOfficialFallback(
   latitude: number,
   longitude: number,
-  accuracy: number
+  accuracy: number,
+  method: "gps" | "map" = "gps"
 ): Promise<NextResponse<LocateResponse>> {
   const result = await locateFromOfficialNationalBoundaries(
     latitude,
     longitude,
     accuracy
   );
+  const response: LocateResponse =
+    result.status === "success" && method === "map" && result.source !== "nearest"
+      ? { ...result, source: "map" }
+      : result;
   const status =
-    result.status === "success"
+    response.status === "success"
       ? 200
-      : result.code === "NETWORK_ERROR"
+      : response.code === "NETWORK_ERROR"
         ? 502
-        : result.code === "POINT_IN_GAP" || result.code === "CONFIDENCE_TOO_LOW"
+        : response.code === "POINT_IN_GAP" || response.code === "CONFIDENCE_TOO_LOW"
           ? 422
           : 400;
-  return NextResponse.json(result, { status });
+  return NextResponse.json(response, { status });
 }
 
 
