@@ -15,7 +15,6 @@ import { createLocateError } from "@/lib/utils/errors";
 const NISR_QUERY_URL =
   "https://gis-server.statistics.gov.rw/server/rest/services/Hosted/Village_Boundary_2022/FeatureServer/3/query";
 const NISR_SOURCE = "NISR Village Boundary 2022";
-const MIN_CONFIDENCE = 5;
 
 type BoundaryGeometry = Polygon | MultiPolygon;
 type BoundaryFeature = Feature<BoundaryGeometry, Record<string, unknown>>;
@@ -211,25 +210,99 @@ export async function locateFromOfficialNationalBoundaries(
     });
   }
 
+  let nearestFallbackUsed = false;
+
+  if (rawMatches.length === 0) {
+    // The official layer has gaps (including some Lake Kivu coverage). Search
+    // a wider 50 km area and return the closest real NISR villages as estimates.
+    // This never fabricates a place name and does not call the scores probabilities.
+    const fallbackCircle = turf.circle([longitude, latitude], 50, {
+      steps: 32,
+      units: "kilometers",
+    });
+    const fallbackParams = new URLSearchParams(params);
+    fallbackParams.set(
+      "geometry",
+      JSON.stringify({
+        rings: [fallbackCircle.geometry.coordinates[0]],
+        spatialReference: { wkid: 4326 },
+      })
+    );
+
+    try {
+      const fallbackResponse = await fetch(NISR_QUERY_URL, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: fallbackParams.toString(),
+        cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (fallbackResponse.ok) {
+        const payload = (await fallbackResponse.json()) as BoundaryCollection | {
+          error?: { message?: string; details?: string[] };
+        };
+        if ("features" in payload && Array.isArray(payload.features)) {
+          const point = turf.point([longitude, latitude]);
+          const nearby: Array<{
+            feature: BoundaryFeature;
+            props: Record<string, unknown>;
+            codes: NonNullable<ReturnType<typeof scopeCodes>>;
+            name: string;
+            distanceMeters: number;
+          }> = [];
+
+          for (const feature of payload.features) {
+            if (!feature?.geometry || !feature.properties) continue;
+            const props = feature.properties;
+            const codes = scopeCodes(props);
+            const name = field(props, "village");
+            if (!codes || !name) continue;
+
+            const center = turf.centroid(feature);
+            const distanceMeters = turf.distance(point, center, { units: "meters" });
+            if (Number.isFinite(distanceMeters) && distanceMeters <= 50_000) {
+              nearby.push({ feature, props, codes, name, distanceMeters });
+            }
+          }
+
+          nearby.sort((a, b) => a.distanceMeters - b.distanceMeters);
+          const selected = nearby.slice(0, 3);
+          const weights = selected.map((item) =>
+            Math.exp(-item.distanceMeters / Math.max(250, accuracyMeters))
+          );
+          const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+
+          selected.forEach((item, index) => {
+            rawMatches.push({
+              feature: item.feature,
+              props: item.props,
+              codes: item.codes,
+              name: item.name,
+              area: 0,
+              confidence: totalWeight > 0 ? (weights[index] / totalWeight) * 100 : 0,
+            });
+          });
+          nearestFallbackUsed = rawMatches.length > 0;
+        }
+      }
+    } catch (error) {
+      console.error("[national-boundaries] nearest-village fallback failed:", error);
+    }
+  }
+
   if (rawMatches.length === 0) {
     return createLocateError("POINT_IN_GAP", {
       source: NISR_SOURCE,
       message:
-        "No official village polygon intersects the reported GPS accuracy area. The source dataset does not cover every gazetted village and excludes some Lake Kivu area.",
+        "Nta mudugudu uri muri aka gace wabonetse mu makuru yemewe. Ushobora gushakisha cyangwa guhitamo umudugudu ku rutonde.",
     });
   }
 
   rawMatches.sort((a, b) => b.confidence - a.confidence);
   const top = rawMatches[0];
 
-  if (top.confidence < MIN_CONFIDENCE) {
-    return createLocateError("CONFIDENCE_TOO_LOW", {
-      max_confidence: Math.round(top.confidence * 100) / 100,
-      source: NISR_SOURCE,
-    });
-  }
-
-  const matches: ConfidenceMatch[] = rawMatches.map((item) =>
+  const matches: ConfidenceMatch[] = rawMatches.slice(0, 3).map((item) =>
     asMatch(
       item.codes.village,
       "village",
@@ -300,10 +373,12 @@ export async function locateFromOfficialNationalBoundaries(
     hierarchy,
     // Official boundary data does not contain verified current leader contacts.
     leaders: [],
-    source: "gps",
+    source: nearestFallbackUsed ? "nearest" : "gps",
   };
 
-  if (matches.length > 1 && matches[1].confidence > 5) {
+  if (nearestFallbackUsed) {
+    result.warning = "NEAREST_VILLAGE_ESTIMATE";
+  } else if (matches.length > 1 && matches[1].confidence > 5) {
     result.warning =
       "GPS_ACCURACY_AREA_CROSSES_VILLAGE_BOUNDARIES";
   }
