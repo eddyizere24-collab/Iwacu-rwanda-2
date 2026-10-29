@@ -129,10 +129,17 @@ CREATE POLICY "audit_logs_no_direct_write"
   TO authenticated
   WITH CHECK (false);
 
--- Browser-facing roles must not read the leaders base table directly because
--- it contains raw phone numbers. Public application reads go through server
--- APIs which mask numbers; the v_active_leaders view deliberately excludes them.
-REVOKE SELECT ON TABLE public.leaders FROM anon, authenticated;
+-- Browser-facing roles must not read base tables directly. The leaders table
+-- contains raw phone numbers; public application data must go through server
+-- APIs that mask phones, while the public view deliberately excludes them.
+REVOKE ALL PRIVILEGES ON TABLE public.boundaries FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE public.leaders FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE public.admin_profiles FROM anon, authenticated;
+REVOKE ALL PRIVILEGES ON TABLE public.audit_logs FROM anon, authenticated;
+
+GRANT SELECT ON public.admin_profiles TO authenticated;
+GRANT SELECT ON public.audit_logs TO authenticated;
+GRANT SELECT ON public.v_active_leaders TO anon, authenticated;
 
 -- Privileged RPCs are server-only; do not leave PostgreSQL's default PUBLIC
 -- EXECUTE permission in place.
