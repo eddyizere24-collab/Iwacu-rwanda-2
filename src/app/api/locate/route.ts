@@ -54,7 +54,7 @@ export async function POST(
         return NextResponse.json(createLocateError("NOT_FOUND"), { status: 400 });
       }
       if (!isSupabasePublicConfigured()) {
-        return NextResponse.json(createLocateError("DATABASE_ERROR"), { status: 503 });
+        return NextResponse.json(createLocateError("NETWORK_ERROR", { reason: "database_not_configured" }), { status: 503 });
       }
       return respondWithManualSelection(createSupabasePublicClient(), scopeCode);
     }
