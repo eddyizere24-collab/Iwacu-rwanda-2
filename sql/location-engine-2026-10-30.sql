@@ -77,14 +77,6 @@ AS $function$
       AND b.level = 'village'
       AND b.geom IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM ranked_intersections)
-      AND EXISTS (
-        SELECT 1
-        FROM public.boundaries AS country
-        WHERE country.level = 'country'
-          AND country.valid_to IS NULL
-          AND country.geom IS NOT NULL
-          AND ST_Covers(country.geom, c.point_geom)
-      )
     ORDER BY b.geom <-> c.point_geom
     LIMIT 3
   ),
