@@ -6,11 +6,11 @@ BEGIN;
 
 -- SECURITY DEFINER functions must not trust a caller-controlled search path.
 ALTER FUNCTION public.calculate_location_confidence(DOUBLE PRECISION, DOUBLE PRECISION, DOUBLE PRECISION)
-  SET search_path = pg_catalog, public;
+  SET search_path = pg_catalog, public, extensions;
 ALTER FUNCTION public.ingest_boundary_feature(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT)
-  SET search_path = pg_catalog, public;
+  SET search_path = pg_catalog, public, extensions;
 ALTER FUNCTION public.ingest_boundary_batch(JSONB)
-  SET search_path = pg_catalog, public;
+  SET search_path = pg_catalog, public, extensions;
 
 -- The version helper accepts only the two tables that actually have a version
 -- column. The table identifier is always schema-qualified.
@@ -21,7 +21,7 @@ CREATE OR REPLACE FUNCTION public.check_version(
 ) RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, extensions
 AS $checkversion$
 DECLARE
   current_version INTEGER;
