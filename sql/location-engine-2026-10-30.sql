@@ -26,15 +26,19 @@ STABLE
 SECURITY INVOKER
 SET search_path TO 'pg_catalog', 'public', 'extensions'
 AS $function$
-  WITH point AS (
+  WITH settings AS (
+    SELECT LEAST(GREATEST(COALESCE(p_accuracy_m, 100), 1), 50000) AS accuracy_m
+  ),
+  point AS (
     SELECT ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326) AS geom
   ),
   circle AS (
     SELECT
-      ST_Buffer(point.geom::geography, GREATEST(p_accuracy_m, 1))::geometry AS geom,
-      ST_Area(ST_Buffer(point.geom::geography, GREATEST(p_accuracy_m, 1))) AS area_m2,
+      ST_Buffer(point.geom::geography, settings.accuracy_m)::geometry AS geom,
+      ST_Area(ST_Buffer(point.geom::geography, settings.accuracy_m)) AS area_m2,
       point.geom AS point_geom
     FROM point
+    CROSS JOIN settings
   ),
   intersections AS (
     SELECT
@@ -82,9 +86,9 @@ AS $function$
       EXP(
         -n.distance_m / GREATEST(250.0, p_accuracy_m)
       ) AS weight,
-      SUM(EXP(-n.distance_m / GREATEST(250.0, p_accuracy_m))) OVER () AS total_weight
+      SUM(EXP(-n.distance_m / GREATEST(250.0, LEAST(GREATEST(COALESCE(p_accuracy_m, 100), 1), 50000)))) OVER () AS total_weight
     FROM nearest AS n
-    WHERE n.distance_m <= LEAST(GREATEST(p_accuracy_m * 2, 1000.0), 50000.0)
+    WHERE n.distance_m <= LEAST(GREATEST(COALESCE(p_accuracy_m, 100) * 2, 1000.0), 50000.0)
   )
   SELECT
     ri.scope_code,
