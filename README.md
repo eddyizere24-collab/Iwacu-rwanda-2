@@ -1,6 +1,6 @@
 # IWACU RWANDA
 
-Civic technology platform that lets Rwandan citizens discover their exact administrative location and local leaders using GPS, IP, or manual search — with extreme geospatial precision and strict NCSA Law compliance.
+Civic technology platform that lets Rwandan citizens discover their exact administrative location and local leaders using GPS, IP, or manual search — with confidence-ranked geospatial matching and security controls designed for review against applicable Rwanda data-protection requirements. This project has not yet received a legal compliance certification.
 
 **MVP Scope**: Gasabo District only.
 
@@ -30,7 +30,7 @@ npm run dev
 3. Ingest Gasabo boundaries: `npm run ingest:boundaries`
 4. Seed leaders: `npm run seed:leaders`
 
-## Security Highlights (NCSA No. 058/2021)
+## Security Controls (subject to security and legal review)
 
 - Citizens are 100 % anonymous.
 - Groq receives only natural-language queries and returns function-call intents. Zero personal or leader data ever reaches the LLM.
