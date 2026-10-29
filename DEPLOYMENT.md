@@ -51,7 +51,7 @@ INSERT INTO admin_profiles (user_id, full_name, scope_code, is_super_admin)
 VALUES (
   'USER_UUID_FROM_AUTH_USERS',  -- copy from Authentication → Users
   'Admin Name',
-  'RW-01',                      -- Gasabo district prefix for MVP
+  'RW',                         -- National scope for the first super-admin
   true
 );
 ```
