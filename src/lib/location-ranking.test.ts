@@ -42,11 +42,11 @@ test("IP prior cannot add villages or alter the displayed raw overlap scores", (
 test("districts are derived from hierarchical official scope codes", () => {
   const unmatched = {
     scope_code: "RW-P1-D11-S1101-C110101-V11010101",
-    confidence: 90,
+    confidence: 55,
   };
   const matched = {
     scope_code: "RW-P1-D12-S1201-C120101-V12010101",
-    confidence: 10,
+    confidence: 45,
   };
   const result = rankVillageCandidates(
     [unmatched, matched],
