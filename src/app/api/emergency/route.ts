@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-/** National emergency contacts — static for MVP (no DB). */
+/** National emergency contacts — static list (no DB). Includes common Rwanda helplines. */
 const NATIONAL = [
   {
     number: "112",
@@ -21,6 +21,24 @@ const NATIONAL = [
     label_kiny: "Ambulance / SAMU",
     label_eng: "Ambulance / SAMU",
     category: "medical",
+  },
+  {
+    number: "114",
+    label_kiny: "Isuzuma ry'ibiza / traffic",
+    label_eng: "Traffic / road emergency",
+    category: "traffic",
+  },
+  {
+    number: "116",
+    label_kiny: "Ubufasha bw'abana",
+    label_eng: "Child helpline",
+    category: "child",
+  },
+  {
+    number: "3512",
+    label_kiny: "Isuzuma ry'ubuzima (RBC / health info)",
+    label_eng: "Health information line",
+    category: "health_info",
   },
 ];
 
