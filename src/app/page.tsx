@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useLocation } from "@/hooks/useLocation";
 import { LocationButton } from "@/components/LocationButton";
 import { LeaderCard } from "@/components/LeaderCard";
@@ -101,12 +102,12 @@ export default function HomePage() {
             <LocationButton status={status} onClick={handleLocateClick} />
           </div>
 
-          {/* NCSA Law compliance note */}
+          {/* Link to the current data-use notice; avoid claiming legal certification. */}
           <div className="mt-8 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground/90">
             <ShieldCheck className="h-4 w-4 text-[#00A3E0]" aria-hidden />
-            <span>
-              Uburinzi bw&apos;amakuru bwite bwubahirijwe (NCSA Law No. 058/2021)
-            </span>
+            <Link href="/privacy" className="underline underline-offset-4 hover:text-foreground">
+              Soma uko amakuru yawe akoreshwa
+            </Link>
           </div>
         </section>
       )}
@@ -352,6 +353,11 @@ export default function HomePage() {
             <p className="mt-3 text-center text-xs sm:text-sm text-muted-foreground leading-relaxed">
               Telefone yawe iri bukubaze niba wemera. Nukanda «Emera», tuzamenya
               umudugudu wawe tukubwire abayobozi bawo. Nta konti ukeneye.
+            </p>
+            <p className="mt-3 text-center text-xs text-muted-foreground">
+              <Link href="/privacy" className="underline underline-offset-4 hover:text-foreground">
+                Soma ibisobanuro ku makuru yawe
+              </Link>
             </p>
 
             <div className="mt-6 flex flex-col sm:flex-row gap-2.5">
