@@ -432,15 +432,31 @@ export async function locateFromOfficialNationalBoundaries(
             const name = field(props, "village");
             if (!codes || !name) continue;
 
-            let distanceMeters: number;
+            let distanceMeters = Number.POSITIVE_INFINITY;
             try {
               // Measure to the actual village polygon boundary instead of its
               // centroid so shoreline villages are not ranked by a center in the lake.
-              distanceMeters = turf.pointToLineDistance(
-                point,
-                turf.polygonToLine(feature),
-                { units: "meters" }
-              );
+              const polygons: number[][][][] =
+                feature.geometry.type === "Polygon"
+                  ? [feature.geometry.coordinates as number[][][]]
+                  : feature.geometry.coordinates as number[][][][];
+              for (const polygon of polygons) {
+                for (const ring of polygon) {
+                  for (let index = 0; index < ring.length - 1; index += 1) {
+                    const first = ring[index];
+                    const second = ring[index + 1];
+                    if (!first || !second) continue;
+                    const segment = turf.lineString([
+                      [first[0], first[1]],
+                      [second[0], second[1]],
+                    ]);
+                    const distance = turf.pointToLineDistance(point, segment, { units: "meters" });
+                    if (Number.isFinite(distance) && distance < distanceMeters) {
+                      distanceMeters = distance;
+                    }
+                  }
+                }
+              }
             } catch {
               continue;
             }
