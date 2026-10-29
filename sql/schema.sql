@@ -92,7 +92,7 @@ CREATE TABLE leaders (
   first_name      TEXT NOT NULL,
   last_name       TEXT NOT NULL,
   role            leader_role NOT NULL,
-  phone_number    TEXT,                                 -- Stored encrypted / masked at app layer
+  phone_number    TEXT,                                 -- Personal data; API masks it and gates raw access server-side
   email           TEXT,
   photo_url       TEXT,
   valid_from      TIMESTAMPTZ NOT NULL DEFAULT now(),
