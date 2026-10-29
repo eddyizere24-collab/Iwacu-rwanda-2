@@ -7,6 +7,8 @@
 const CACHE_VERSION = "iwacu-v2-nocache-html";
 const SHELL_CACHE = `iwacu-shell-${CACHE_VERSION}`;
 const BOUNDARIES_CACHE = `iwacu-boundaries-${CACHE_VERSION}`;
+const LOCATION_INDEX_CACHE = "iwacu-location-index-v1";
+const LOCATION_INDEX_URL = "/api/locate?index=1";
 
 // ---------------------------------------------------------------------------
 // Install – Skip waiting immediately
@@ -24,7 +26,7 @@ self.addEventListener("activate", (event) => {
       const keys = await caches.keys();
       await Promise.all(
         keys
-          .filter((k) => k !== BOUNDARIES_CACHE)
+          .filter((k) => ![SHELL_CACHE, BOUNDARIES_CACHE, LOCATION_INDEX_CACHE, "iwacu-boundaries-v1"].includes(k))
           .map((k) => caches.delete(k))
       );
       await self.clients.claim();
@@ -70,7 +72,33 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 2. API routes: network-only
+  // National location index: keep one compact verified copy for offline picker use.
+  if (url.pathname === "/api/locate" && url.searchParams.get("index") === "1") {
+    event.respondWith((async () => {
+      const cache = await caches.open(LOCATION_INDEX_CACHE);
+      const cacheKey = new Request(LOCATION_INDEX_URL, { method: "GET" });
+      const cached = await cache.match(cacheKey);
+      const refresh = fetch(request).then(async (response) => {
+        if (response.ok) await cache.put(cacheKey, response.clone());
+        return response;
+      });
+      if (cached) {
+        event.waitUntil(refresh.then(() => undefined).catch(() => undefined));
+        return cached;
+      }
+      try {
+        return await refresh;
+      } catch {
+        return new Response(
+          JSON.stringify({ status: "error", message: "No cached location index." }),
+          { status: 503, headers: { "Content-Type": "application/json" } }
+        );
+      }
+    })());
+    return;
+  }
+
+  // 2. Other API routes: network-only
   if (url.pathname.startsWith("/api/")) {
     event.respondWith(
       fetch(request).catch(
