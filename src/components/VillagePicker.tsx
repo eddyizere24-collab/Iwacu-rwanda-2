@@ -49,7 +49,7 @@ async function fetchLocationIndex(): Promise<Choice[]> {
 }
 
 function normalizeName(value: string): string {
-  return value.normalize("NFD").replace(/\\p{Diacritic}/gu, "").toLocaleLowerCase();
+  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase();
 }
 
 export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => void }) {
