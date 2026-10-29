@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { isSupabaseConfigured, createSupabaseServiceClient } from "@/lib/supabase/server";
-import { getMockLeaders, toPublicLeader, addMockLeader, deleteMockLeader } from "@/lib/mock-data";
 import { maskPhone } from "@/lib/security/mask";
 import { adminCanManageScope, requireAdminWrite } from "@/lib/security/admin-gate";
 import type { LeaderPublic } from "@/types/leader";
