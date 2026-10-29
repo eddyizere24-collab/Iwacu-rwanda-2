@@ -15,6 +15,8 @@ export type LocationStatus =
   | "error"
   | "offline";
 
+type FeedbackMethod = "gps" | "map" | "manual" | "nearest" | "offline";
+
 export interface UseLocationState {
   status: LocationStatus;
   data: LocateSuccess | null;
@@ -38,6 +40,8 @@ const GPS_TIMEOUT_MS = 15_000;
 export function useLocation() {
   const [state, setState] = useState<UseLocationState>(INITIAL);
   const abortRef = useRef<AbortController | null>(null);
+  const lastFixRef = useRef<{ latitude: number; longitude: number; accuracy: number; method: FeedbackMethod } | null>(null);
+  const feedbackMethodRef = useRef<FeedbackMethod>("manual");
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -79,6 +83,9 @@ export function useLocation() {
       if (controller.signal.aborted) return;
 
       const { latitude, longitude, accuracy } = position.coords;
+      const fixMethod: FeedbackMethod = isOnline ? "gps" : "offline";
+      lastFixRef.current = { latitude, longitude, accuracy, method: fixMethod };
+      feedbackMethodRef.current = fixMethod;
 
       setState((s) => ({ ...s, status: "locating" }));
 
@@ -199,7 +206,8 @@ export function useLocation() {
     }
   }, []);
 
-  const chooseVillage = useCallback(async (scopeCode: string) => {
+  const chooseVillage = useCallback(async (scopeCode: string, selectionMethod: FeedbackMethod = "manual") => {
+    feedbackMethodRef.current = selectionMethod;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -300,7 +308,90 @@ export function useLocation() {
     }
   }, []);
 
-  return { ...state, locate, reset, chooseVillage };
+  const locateAtCoordinate = useCallback(async (
+    latitude: number,
+    longitude: number,
+    accuracy = 200
+  ) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    lastFixRef.current = { latitude, longitude, accuracy, method: "map" };
+    feedbackMethodRef.current = "map";
+    setState({ ...INITIAL, status: "locating" });
+
+    try {
+      const response = await fetch("/api/locate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude, longitude, accuracy, method: "map" }),
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      if (response.status === 429) {
+        setState({
+          ...INITIAL,
+          status: "error",
+          errorCode: "RATE_LIMIT",
+          errorMessageKiny: "Wakoze ibisabwa byinshi cyane. Tegereza gato hanyuma ugerageze nanone.",
+          errorMessageEng: "Too many requests. Please wait a moment and try again.",
+        });
+        return;
+      }
+      const json = (await response.json()) as LocateResponse;
+      if (json.status === "error") {
+        setState({
+          ...INITIAL,
+          status: "error",
+          errorCode: json.code,
+          errorMessageKiny: json.message_kiny,
+          errorMessageEng: json.message_eng,
+        });
+        return;
+      }
+      setState({
+        status: "success",
+        data: json,
+        errorCode: null,
+        errorMessageKiny: null,
+        errorMessageEng: null,
+        isOffline: false,
+      });
+    } catch {
+      if (controller.signal.aborted) return;
+      setState({
+        ...INITIAL,
+        status: "error",
+        errorCode: "NETWORK_ERROR",
+        errorMessageKiny: "Ikarita ntishoboye kugenzura ahantu. Gerageza interineti cyangwa uhitemo umudugudu ku rutonde.",
+        errorMessageEng: "The map location could not be checked. Reconnect or choose a village manually.",
+      });
+    }
+  }, []);
+
+  const submitLocationFeedback = useCallback(async (scopeCode: string): Promise<void> => {
+    const method = feedbackMethodRef.current;
+    const fix = method !== "manual" && lastFixRef.current?.method === method
+      ? lastFixRef.current
+      : null;
+    const response = await fetch("/api/location-feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        consent: true,
+        scope_code: scopeCode,
+        method,
+        accuracy_m: fix?.accuracy ?? null,
+        latitude: fix?.latitude ?? null,
+        longitude: fix?.longitude ?? null,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error("location_feedback_unavailable");
+    }
+  }, []);
+
+  return { ...state, locate, reset, chooseVillage, locateAtCoordinate, submitLocationFeedback };
 }
 
 // ---------------------------------------------------------------------------
