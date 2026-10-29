@@ -274,7 +274,7 @@ export default function AdminDashboardPage() {
     setError(null);
     try {
       const scopeParam = session.tier === "national" ? "RW" : session.scope_code;
-      const res = await fetch(`/api/leaders?scope_code=${encodeURIComponent(scopeParam)}&reveal=true`);
+      const res = await fetch(`/api/leaders?scope_code=${encodeURIComponent(scopeParam)}`, { cache: "no-store" });
       const json = await res.json();
       if (res.ok && json.leaders) {
         setLeaders(json.leaders);
@@ -369,7 +369,7 @@ export default function AdminDashboardPage() {
     }
   }
 
-  async function toggleRevealPhone(leaderId: string, currentMasked?: string) {
+  async function toggleRevealPhone(leaderId: string) {
     if (revealedPhones[leaderId]) {
       setRevealedPhones((prev) => {
         const copy = { ...prev };
@@ -379,29 +379,31 @@ export default function AdminDashboardPage() {
       return;
     }
 
+    setError(null);
     try {
       const scopeParam = session.tier === "national" ? "RW" : session.scope_code;
-      const res = await fetch(`/api/leaders?scope_code=${scopeParam}&reveal=true`);
+      const params = new URLSearchParams({
+        scope_code: scopeParam,
+        reveal: "true",
+        leader_id: leaderId,
+      });
+      const res = await fetch(`/api/leaders?${params.toString()}`, { cache: "no-store" });
       const json = await res.json();
-      if (res.ok && json.leaders) {
-        const found = json.leaders.find((l: any) => l.id === leaderId);
-        if (found?.phone_number || found?.phone_raw) {
-          setRevealedPhones((prev) => ({
-            ...prev,
-            [leaderId]: found.phone_number || found.phone_raw,
-          }));
-          return;
-        }
+      const found = Array.isArray(json.leaders)
+        ? (json.leaders as LeaderPublic[]).find((leader) => leader.id === leaderId)
+        : undefined;
+
+      if (!res.ok || typeof found?.phone_raw !== "string" || !found.phone_raw.trim()) {
+        setError(json.message_kiny || "Nimero nyayo ntiyabonetse cyangwa nta burenganzira ufite bwo kuyibona.");
+        return;
       }
+
       setRevealedPhones((prev) => ({
         ...prev,
-        [leaderId]: currentMasked || "+250788000000",
+        [leaderId]: found.phone_raw as string,
       }));
     } catch {
-      setRevealedPhones((prev) => ({
-        ...prev,
-        [leaderId]: currentMasked || "+250788000000",
-      }));
+      setError("Ntibyashobotse kubona nimero nyayo. Ongera ugerageze.");
     }
   }
 
@@ -765,7 +767,7 @@ export default function AdminDashboardPage() {
                         const fullName = `${leader.first_name} ${leader.last_name}`;
                         const isPhoneRevealed = !!revealedPhones[leader.id];
                         const phoneDisplay =
-                          revealedPhones[leader.id] || leader.phone_raw || leader.phone_masked;
+                          revealedPhones[leader.id] || leader.phone_masked;
 
                         return (
                           <tr key={leader.id} className="hover:bg-muted/30 transition-colors">
@@ -829,7 +831,7 @@ export default function AdminDashboardPage() {
                                 <span>{phoneDisplay}</span>
                                 <button
                                   type="button"
-                                  onClick={() => toggleRevealPhone(leader.id, leader.phone_masked || undefined)}
+                                  onClick={() => toggleRevealPhone(leader.id)}
                                   className="text-muted-foreground hover:text-foreground"
                                   title={isPhoneRevealed ? "Hisha nimero" : "Erekana nimero yose"}
                                 >
