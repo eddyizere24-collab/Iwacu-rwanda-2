@@ -109,7 +109,7 @@ AS $function$
     ri.inter_area_m2 AS intersection_area_m2,
     ri.path
   FROM ranked_intersections AS ri
-  WHERE ri.rn <= 5
+  WHERE ri.rn <= 3
 
   UNION ALL
 
