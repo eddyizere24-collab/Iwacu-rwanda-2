@@ -5,11 +5,14 @@
 -- SRID 4326, GiST indexes, Row Level Security, Temporal leaders
 -- =============================================================================
 
-CREATE EXTENSION IF NOT EXISTS postgis;
+-- Keep extension-owned tables and RPCs out of the exposed public API schema.
+-- Note: IF NOT EXISTS does not relocate PostGIS already installed in public.
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS postgis_topology;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS ltree;          -- Materialized path for hierarchy
+CREATE EXTENSION IF NOT EXISTS ltree WITH SCHEMA extensions; -- Materialized path for hierarchy
 
 -- -----------------------------------------------------------------------------
 -- ENUMS
@@ -192,7 +195,7 @@ CREATE OR REPLACE FUNCTION check_version(
 ) RETURNS BOOLEAN
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, extensions
 AS $$
 DECLARE
   current_version INTEGER;
@@ -375,7 +378,7 @@ RETURNS TABLE (
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, extensions
 AS $$
   WITH circle AS (
     SELECT ST_Buffer(
@@ -442,7 +445,7 @@ CREATE OR REPLACE FUNCTION ingest_boundary_feature(
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, extensions
 AS $$
 DECLARE
   v_geom geometry;
@@ -501,7 +504,7 @@ CREATE OR REPLACE FUNCTION ingest_boundary_batch(p_features JSONB)
 RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, public, extensions
 AS $$
 DECLARE
   v_village_count INTEGER := 0;
