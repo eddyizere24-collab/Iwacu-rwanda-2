@@ -36,6 +36,7 @@ import { BulkImportModal } from "@/components/BulkImportModal";
 import { AdminDossierModal } from "@/components/admin/AdminDossierModal";
 import { RwandanSun } from "@/components/RwandanSun";
 import type { AdministrativeUnit } from "@/lib/rwanda-geo";
+import { createSupabaseBrowserClient, isSupabaseBrowserConfigured } from "@/lib/supabase/client";
 import type { AdminTier } from "@/app/admin/login/page";
 
 interface StoredAdminSession {
@@ -61,6 +62,7 @@ export default function AdminDashboardPage() {
 
   const [leaders, setLeaders] = useState<LeaderPublic[]>([]);
   const [loading, setLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterLevel, setFilterLevel] = useState<string>("all");
@@ -167,42 +169,111 @@ export default function AdminDashboardPage() {
   const [revealedPhones, setRevealedPhones] = useState<Record<string, string>>({});
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
-  // Load the selected scope and map it to canonical NISR hierarchy codes.
+  // Verify the real Supabase session and admin profile before showing the dashboard.
+  // localStorage is only a display preference; it is never trusted for authorization.
   useEffect(() => {
-    const stored = localStorage.getItem("iwacu_admin_session");
-    if (!stored) return;
-    try {
-      const parsed = JSON.parse(stored) as StoredAdminSession;
-      setSession(parsed);
-      const parts = parsed.scope_code.split("-");
-      if (parts[0] === "RW" && parts[1]?.startsWith("P")) {
-        setFilterProvince(parts.slice(0, 2).join("-"));
-        if (parsed.tier === "district" || parsed.tier === "sector" || parsed.tier === "cell") {
-          setFilterDistrict(parts.slice(0, 3).join("-"));
-        } else {
-          setFilterDistrict("");
+    let active = true;
+
+    async function verifyAdminSession() {
+      if (!isSupabaseBrowserConfigured()) {
+        localStorage.removeItem("iwacu_admin_session");
+        router.replace("/admin/login");
+        return;
+      }
+
+      try {
+        const supabase = createSupabaseBrowserClient();
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError || !authData.user) {
+          localStorage.removeItem("iwacu_admin_session");
+          router.replace("/admin/login");
+          return;
         }
-        if (parsed.tier === "sector" || parsed.tier === "cell") {
-          setFilterSector(parts.slice(0, 4).join("-"));
+
+        const { data: profile, error: profileError } = await supabase
+          .from("admin_profiles")
+          .select("user_id, full_name, scope_code, is_super_admin")
+          .eq("user_id", authData.user.id)
+          .maybeSingle();
+
+        if (profileError || !profile || typeof profile.scope_code !== "string") {
+          localStorage.removeItem("iwacu_admin_session");
+          await supabase.auth.signOut();
+          router.replace("/admin/login");
+          return;
+        }
+
+        const profileScope = profile.scope_code;
+        const validScope = /^RW(?:-[0-9A-Z]{2,})*$/.test(profileScope);
+        const profileDepth = profileScope === "RW" ? 0 : profileScope.split("-").length - 1;
+        if (!validScope || profileDepth > 4) {
+          localStorage.removeItem("iwacu_admin_session");
+          await supabase.auth.signOut();
+          router.replace("/admin/login");
+          return;
+        }
+
+        let preferredScope = profileScope;
+        let preferredName = profile.full_name || profileScope;
+        try {
+          const stored = localStorage.getItem("iwacu_admin_session");
+          if (stored) {
+            const parsed = JSON.parse(stored) as Partial<StoredAdminSession>;
+            const requested = typeof parsed.scope_code === "string" ? parsed.scope_code : "";
+            const allowed =
+              profile.is_super_admin === true ||
+              requested === profileScope ||
+              (profileScope !== "RW" && requested.startsWith(profileScope + "-"));
+            if (/^RW(?:-[0-9A-Z]{2,})*$/.test(requested) && allowed) {
+              preferredScope = requested;
+              preferredName = typeof parsed.scope_name === "string" ? parsed.scope_name : requested;
+            }
+          }
+        } catch {
+          localStorage.removeItem("iwacu_admin_session");
+        }
+
+        const depth = preferredScope === "RW" ? 0 : preferredScope.split("-").length - 1;
+        const tierByDepth: AdminTier[] = ["national", "province", "district", "sector", "cell"];
+        const verifiedSession: StoredAdminSession = {
+          tier: tierByDepth[Math.min(depth, 4)],
+          scope_code: preferredScope,
+          scope_name: preferredName,
+          email: authData.user.email || "",
+          loginTime: new Date().toISOString(),
+        };
+
+        if (!active) return;
+        setSession(verifiedSession);
+        localStorage.setItem("iwacu_admin_session", JSON.stringify(verifiedSession));
+        const parts = preferredScope.split("-");
+        if (parts[0] === "RW" && parts.length > 1) {
+          setFilterProvince(parts.slice(0, 2).join("-"));
+          setFilterDistrict(depth >= 2 ? parts.slice(0, 3).join("-") : "");
+          setFilterSector(depth >= 3 ? parts.slice(0, 4).join("-") : "all");
         } else {
+          setFilterProvince("");
+          setFilterDistrict("");
           setFilterSector("all");
         }
-      } else {
-        setFilterProvince("");
-        setFilterDistrict("");
-        setFilterSector("all");
+        setAuthReady(true);
+      } catch (error) {
+        console.error("[admin dashboard] session verification failed:", error);
+        localStorage.removeItem("iwacu_admin_session");
+        router.replace("/admin/login");
       }
-    } catch {
-      localStorage.removeItem("iwacu_admin_session");
     }
-  }, []);
+
+    void verifyAdminSession();
+    return () => { active = false; };
+  }, [router]);
 
   const fetchLeaders = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const scopeParam = session.tier === "national" ? "RW" : session.scope_code;
-      const res = await fetch(`/api/leaders?scope_code=${encodeURIComponent(scopeParam)}&include_dossier=true`);
+      const res = await fetch(`/api/leaders?scope_code=${encodeURIComponent(scopeParam)}&reveal=true`);
       const json = await res.json();
       if (res.ok && json.leaders) {
         setLeaders(json.leaders);
@@ -229,9 +300,10 @@ export default function AdminDashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (!authReady) return;
     fetchLeaders();
     fetchReports();
-  }, [fetchLeaders, fetchReports]);
+  }, [authReady, fetchLeaders, fetchReports]);
 
   /**
    * Authority Check: Can the current admin edit or assign this leader's core role?
@@ -352,11 +424,17 @@ export default function AdminDashboardPage() {
     return matchesSearch && matchesLevel && matchesProvince && matchesDistrict && matchesSector;
   });
 
-  function handleLogout() {
+  async function handleLogout() {
     if (typeof window !== "undefined") {
       localStorage.removeItem("iwacu_admin_session");
     }
-    router.push("/admin/login");
+    try {
+      if (isSupabaseBrowserConfigured()) {
+        await createSupabaseBrowserClient().auth.signOut();
+      }
+    } finally {
+      router.replace("/admin/login");
+    }
   }
 
   // Staffing metrics
