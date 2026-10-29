@@ -3,49 +3,71 @@ import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
 /**
- * Browser-facing server client (respects RLS via user session cookies).
+ * True only when real Supabase Auth configuration is present.
+ * Never treat placeholder values as credentials.
  */
-export async function createSupabaseServerClient() {
-  const cookieStore = await cookies();
-
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet: Array<{ name: string; value: string; options?: Record<string, unknown> }>) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options as any)
-            );
-          } catch {
-            // Called from a Server Component — ignore.
-          }
-        },
-      },
-    }
-  );
-}
-
-export function isSupabaseConfigured(): boolean {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+export function isSupabaseAuthConfigured(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
   return Boolean(
     url &&
-      key &&
-      !url.includes("placeholder") &&
+      anonKey &&
+      !url.toLowerCase().includes("placeholder") &&
       !url.includes("xxxxxxxx") &&
-      !key.includes("eyJ...")
+      !anonKey.toLowerCase().includes("placeholder") &&
+      !anonKey.includes("xxxxxxxx") &&
+      !anonKey.includes("eyJ...")
   );
 }
 
 /**
- * Service-role client. Bypasses RLS. Use ONLY on the server for
- * geospatial calculations and admin operations that require elevated rights.
- * Never expose this client or its key to the browser.
+ * True only when both user authentication and the server-only database key
+ * are configured. The service-role key must never be exposed to a browser.
+ */
+export function isSupabaseConfigured(): boolean {
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  return Boolean(
+    isSupabaseAuthConfigured() &&
+      serviceRoleKey &&
+      !serviceRoleKey.toLowerCase().includes("placeholder") &&
+      !serviceRoleKey.includes("xxxxxxxx") &&
+      !serviceRoleKey.includes("eyJ...")
+  );
+}
+
+/**
+ * Browser-facing server client (respects RLS via Supabase Auth cookies).
+ */
+export async function createSupabaseServerClient() {
+  const cookieStore = await cookies();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!isSupabaseAuthConfigured() || !url || !anonKey) {
+    throw new Error("Supabase Auth environment variables are not configured.");
+  }
+
+  return createServerClient(url, anonKey, {
+    cookies: {
+      getAll() {
+        return cookieStore.getAll();
+      },
+      setAll(cookiesToSet: Array<{ name: string; value: string; options?: Record<string, unknown> }>) {
+        try {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options as any)
+          );
+        } catch {
+          // Called from a Server Component — ignore.
+        }
+      },
+    },
+  });
+}
+
+/**
+ * Service-role client. Bypasses RLS. Use ONLY on the server after verifying
+ * the authenticated user's admin profile and permitted scope.
  */
 export function createSupabaseServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
