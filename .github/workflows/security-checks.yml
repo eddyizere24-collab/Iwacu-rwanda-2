@@ -1,0 +1,48 @@
+name: IWACU RWANDA security checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [security/part-2-auth-hardening]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iwacu-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Typecheck, security tests, and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+      SUPABASE_SERVICE_ROLE_KEY: placeholder
+      NEXT_PUBLIC_APP_URL: https://example.invalid
+      NEXT_PUBLIC_DEFAULT_DISTRICT_SCOPE: RW
+    steps:
+      - name: Checkout reviewed commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Security authorization tests
+        run: npm run test:security
+
+      - name: Production build
+        run: npm run build
