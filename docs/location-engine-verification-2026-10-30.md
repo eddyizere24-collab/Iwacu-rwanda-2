@@ -25,6 +25,7 @@ The SQL migration is stored in `supabase/migrations/20261030000000_location_conf
 
 - Removed the fixed 150-metre GPS accuracy rejection. The browser watches several readings, keeps the best, and tries coarse browser/network/Wi-Fi location if the result remains poor.
 - Added a Kinyarwanda hierarchy picker and name search: Intara/Umujyi → Akarere → Umurenge → Akagari → Umudugudu.
+- Manual confirmation also validates against the bundled national index if Supabase is unconfigured, points at an empty project, or lacks that village row. This prevents a database-mismatch dead end for names in the shipped index; a manually selected village is labelled as user-confirmed, not GPS-confirmed.
 - Added `public/offline/location-index.json`: a compact index from active boundary records, containing 17,422 non-country rows: 5 provinces, 30 districts, 416 sectors, 2,148 cells and 14,823 villages. Parent links were checked; no parent reference was missing.
 - The service worker pre-caches the static location index on installation. Once the app/service worker has installed the index while online, a citizen can browse and choose a village offline. The first-ever installation while entirely offline is not possible.
 - Added a tap/drag map pin with an official NISR 2022 village polygon overlay for the visible map area. Choosing a point submits it as a map-derived coordinate and uses the same location API. The map/tiles require network access and have not been tested end-to-end on Preview.
