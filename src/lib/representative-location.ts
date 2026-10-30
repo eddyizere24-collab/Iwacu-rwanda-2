@@ -153,6 +153,29 @@ export function nearestVillageEstimateFromIndex(
   }));
 
   const matches = allVillageMatches.slice(0, 3);
+  const byCode = new Map(choices.map((choice) => [choice.scope_code, choice]));
+  const aggregates = aggregateLocationHierarchy(allVillageMatches);
+  const hierarchyCandidates: NonNullable<LocateSuccess["hierarchyCandidates"]> = {};
+  const hierarchy: LocateSuccess["hierarchy"] = {};
+
+  for (const level of ["province", "district", "sector", "cell", "village"] as const) {
+    const resolved = (aggregates[level] ?? []).slice(0, 3).flatMap((item) => {
+      const choice = byCode.get(item.scope_code);
+      if (!choice) return [];
+      return [{
+        scope_code: choice.scope_code,
+        name_kiny: choice.name_kiny,
+        name_eng: choice.name_eng,
+        level,
+        confidence: item.confidence,
+        intersection_area_m2: item.intersection_area_m2,
+      } satisfies ConfidenceMatch];
+    });
+    if (resolved.length > 0) {
+      hierarchyCandidates[level] = resolved;
+      hierarchy[level] = resolved[0];
+    }
+  }
 
   return {
     status: "success",
