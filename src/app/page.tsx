@@ -194,8 +194,13 @@ export default function HomePage() {
           </p>
 
           <div className="mt-4 inline-block rounded-xl bg-amber-500/10 border border-amber-500/20 px-3.5 py-1.5 text-xs text-amber-800 dark:text-amber-300">
-            Mu nzu, network/Wi-Fi ishobora kubanza gutanga igisubizo; GPS izakomeza kugenzura.
+            Mu nzu, network/Wi-Fi cyangwa IP bishobora kubanza gutanga igereranya; GPS izakomeza kurinoza.
           </div>
+          {noticeKiny && (
+            <p role="status" aria-live="polite" className="mx-auto mt-3 max-w-xl rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+              {noticeKiny}
+            </p>
+          )}
 
           <div className="mt-6">
             <button
