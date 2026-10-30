@@ -47,7 +47,8 @@ export function NearbyLandmarks({
   const [message, setMessage] = useState("");
 
   async function loadNearby() {
-    if (loading) return;
+    // Defence in depth: disabled means no request, even if this callback is invoked.
+    if (!enabled || loading) return;
     setOpen(true);
     if (result) return;
     setLoading(true);

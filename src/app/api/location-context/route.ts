@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Server-side gate: absence of the public flag is deliberately OFF.
+const LANDMARKS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_LANDMARKS === "true";
+
 type OverpassElement = {
   type?: string;
   id?: number;
@@ -54,7 +57,7 @@ function classify(tags: Record<string, string>): NearbyFeature["category"] | nul
  * may be identified by type, but no place name is ever invented.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  if (process.env.NEXT_PUBLIC_FEATURE_LANDMARKS !== "true") {
+  if (!LANDMARKS_ENABLED) {
     return NextResponse.json({ disabled: true }, { status: 200, headers: { "Cache-Control": "no-store" } });
   }
   let body: unknown;
