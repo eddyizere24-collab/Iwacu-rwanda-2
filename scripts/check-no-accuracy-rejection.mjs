@@ -1,36 +1,52 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { extname, join, relative } from "node:path";
 
 const root = process.cwd();
 const sourceRoot = join(root, "src");
-const forbidden = /MAX_ACCURACY|accuracy\s*(?:>|>=)\s*\d+(?:\.\d+)?/i;
-const allowList = new Set([
-  "src/hooks/useLocation.ts:96",
-  "src/hooks/useLocation.ts:188",
+
+// Allow-list: useLocation.ts lines 96 and 188 compare effectiveAccuracy with
+// bestAccuracy to select the better available fix. They are not fixed numeric
+// rejection thresholds. Keep both the location and bestAccuracy token checks.
+const allowList = new Map([
+  ["src/hooks/useLocation.ts", new Set([96, 188])],
 ]);
 
-function walk(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return walk(path);
-    return /\.(?:ts|tsx|js|jsx)$/.test(entry.name) ? [path] : [];
+const forbiddenAccuracyGuard = /\baccuracy\s*(?:>=|>)\s*\d+(?:\.\d+)?\b/i;
+const supportedExtensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+
+function walk(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const filePath = join(directory, entry.name);
+    if (entry.isDirectory()) return walk(filePath);
+    return supportedExtensions.has(extname(entry.name)) ? [filePath] : [];
   });
 }
 
-const failures: string[] = [];
-for (const file of walk(sourceRoot)) {
-  const rel = relative(root, file).replaceAll("\\", "/");
-  const lines = readFileSync(file, "utf8").split(/\r?\n/);
+const failures = [];
+for (const filePath of walk(sourceRoot)) {
+  const relativePath = relative(root, filePath).replaceAll("\\", "/");
+  const lines = readFileSync(filePath, "utf8").split(/\r?\n/);
+
   lines.forEach((line, index) => {
-    if (!forbidden.test(line)) return;
-    const key = `${rel}:${index + 1}`;
-    if (allowList.has(key) && /bestAccuracy/.test(line)) return;
-    failures.push(`${key}: ${line.trim()}`);
+    const lineNumber = index + 1;
+    const hasForbiddenConstant = /\bMAX_ACCURACY\b/.test(line);
+    const hasNumericGuard = forbiddenAccuracyGuard.test(line);
+    if (!hasForbiddenConstant && !hasNumericGuard) return;
+
+    const allowedLines = allowList.get(relativePath);
+    const isDocumentedBestFixComparison =
+      allowedLines?.has(lineNumber) === true &&
+      /effectiveAccuracy\s*(?:>=|>)\s*bestAccuracy/.test(line);
+
+    if (isDocumentedBestFixComparison && !hasForbiddenConstant) return;
+    failures.push(`${relativePath}:${lineNumber}: ${line.trim()}`);
   });
 }
-if (failures.length) {
-  console.error("Forbidden accuracy rejection guard(s):");
+
+if (failures.length > 0) {
+  console.error("Forbidden accuracy rejection guard(s) found:");
   for (const failure of failures) console.error(failure);
   process.exit(1);
 }
-console.log("Accuracy rejection guard check passed.");
+
+console.log("OK: no MAX_ACCURACY constant or numeric accuracy > / >= guard found in src.");
