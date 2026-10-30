@@ -40,6 +40,7 @@ export function NearbyLandmarks({
   longitude: number;
   onSelect: (latitude: number, longitude: number, accuracyMeters: number) => void;
 }) {
+  const enabled = process.env.NEXT_PUBLIC_FEATURE_LANDMARKS === "true";
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ContextResponse | null>(null);
@@ -69,6 +70,8 @@ export function NearbyLandmarks({
       setLoading(false);
     }
   }
+
+  if (!enabled) return null;
 
   const features = result?.features ?? [];
   const waterFeatures = features.filter((item) =>
