@@ -24,7 +24,8 @@ export const dynamic = "force-dynamic";
 const LocateBodySchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  accuracy: z.number().positive().max(50_000),
+  // Accept any finite positive GPS radius; downstream PostGIS/NISR work is capped safely.
+  accuracy: z.number().finite().positive(),
   method: z.enum(["gps", "map"]).optional().default("gps"),
 });
 
