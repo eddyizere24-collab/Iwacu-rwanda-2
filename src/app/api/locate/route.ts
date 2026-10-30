@@ -44,6 +44,12 @@ interface RpcRow {
 export async function POST(
   req: NextRequest
 ): Promise<NextResponse<LocateResponse>> {
+  let fallbackCoordinates: {
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    method: "gps" | "map" | "network" | "ip";
+  } | null = null;
   try {
     let body: unknown;
     try {
@@ -97,6 +103,7 @@ export async function POST(
     }
 
     const { latitude, longitude, accuracy, method } = parsed.data;
+    fallbackCoordinates = { latitude, longitude, accuracy, method };
 
     if (!isSupabasePublicConfigured()) {
       // No database is configured: resolve against the official national NISR
@@ -193,13 +200,21 @@ export async function POST(
 
     return NextResponse.json(response);
   } catch (err) {
-    console.error("[locate] Unexpected error:", err);
-    return NextResponse.json(
-      createLocateError("NETWORK_ERROR", {
-        reason: err instanceof Error ? err.message : "unknown",
-      }),
-      { status: 502 }
-    );
+    console.error("[locate] Unexpected error; returning a best available location fallback:", err);
+    if (fallbackCoordinates) {
+      try {
+        return await respondWithOfficialFallback(
+          fallbackCoordinates.latitude,
+          fallbackCoordinates.longitude,
+          fallbackCoordinates.accuracy,
+          fallbackCoordinates.method
+        );
+      } catch {
+        // Keep the public location flow non-empty even if both Supabase and
+        // the official boundary fallback are unavailable.
+      }
+    }
+    return NextResponse.json(createRwandaProvincePrior(false), { status: 200 });
   }
 }
 
