@@ -59,17 +59,14 @@ export async function POST(
       const country = req.headers.get("x-vercel-ip-country");
       const ipLatitude = Number(req.headers.get("x-vercel-ip-latitude"));
       const ipLongitude = Number(req.headers.get("x-vercel-ip-longitude"));
-      if (country && country !== "RW") {
-        return NextResponse.json(createLocateError("OUTSIDE_RWANDA", { ip_country: country }), { status: 200 });
-      }
-      if (
+      // Mobile-carrier IP gateways can geolocate outside Rwanda even when
+      // the phone is physically in Rwanda. Prefer valid Rwanda coordinates;
+      // never turn an IP-country mismatch into a dead-end error.
+      const ipCoordinatesInRwanda =
         Number.isFinite(ipLatitude) && Number.isFinite(ipLongitude) &&
-        ipLatitude >= -90 && ipLatitude <= 90 && ipLongitude >= -180 && ipLongitude <= 180 &&
-        (country === "RW" || (
-          ipLongitude >= 28.5 && ipLongitude <= 31.2 &&
-          ipLatitude >= -3.2 && ipLatitude <= -0.7
-        ))
-      ) {
+        ipLatitude >= -3.2 && ipLatitude <= -0.7 &&
+        ipLongitude >= 28.5 && ipLongitude <= 31.2;
+      if (ipCoordinatesInRwanda) {
         // Vercel IP coordinates are a coarse network hint, not device GPS.
         // Use the largest supported uncertainty radius and label the source.
         body = { latitude: ipLatitude, longitude: ipLongitude, accuracy: 50_000, method: "ip" };
