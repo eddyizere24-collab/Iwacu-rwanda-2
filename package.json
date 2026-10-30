@@ -9,7 +9,7 @@
     "start": "next start -p 3000 -H 0.0.0.0",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test:location": "tsx --test src/lib/location-ranking.test.ts src/lib/representative-location.test.ts src/lib/location-hierarchy.test.ts src/lib/location-prior.test.ts",
+    "test:location": "tsx --test src/lib/location-ranking.test.ts src/lib/representative-location.test.ts src/lib/location-hierarchy.test.ts src/lib/location-prior.test.ts src/lib/location-ui-contract.test.ts",
     "db:migrate": "echo 'Run sql/schema.sql against your Supabase project via the SQL Editor'",
     "ingest:boundaries": "tsx scripts/ingest-boundaries.ts",
     "download:boundaries": "tsx scripts/download-rwanda-boundaries.ts",
