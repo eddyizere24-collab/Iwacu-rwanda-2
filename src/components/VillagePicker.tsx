@@ -36,7 +36,8 @@ function normalizeName(value: string): string {
 
 function decodeChoices(payload: unknown, parentScopeCode: string): Choice[] {
   if (!payload || typeof payload !== "object") throw new Error("index_invalid");
-  const raw = (payload as { choices?: unknown }).choices;
+  const response = payload as { choices?: unknown; units?: unknown };
+  const raw = response.units ?? response.choices;
   if (!Array.isArray(raw)) throw new Error("index_invalid");
   return raw.flatMap((row): Choice[] => {
     let choice: Choice;
@@ -57,7 +58,7 @@ function decodeChoices(payload: unknown, parentScopeCode: string): Choice[] {
       const value = row as Record<string, unknown>;
       const level = String(value.level ?? "") as BoundaryLevel;
       if (!ALLOWED.has(level)) return [];
-      const scopeCode = String(value.scope_code ?? "");
+      const scopeCode = String(value.scope_code ?? value.code ?? "");
       choice = {
         scope_code: scopeCode,
         name_kiny: String(value.name_kiny ?? ""),
@@ -135,19 +136,21 @@ async function loadChoices(level: BoundaryLevel, parentScopeCode: string, query:
 
   if (typeof navigator !== "undefined" && navigator.onLine !== false) {
     try {
-      const params = new URLSearchParams({ level });
-      if (parentScopeCode) params.set("parent_scope_code", parentScopeCode);
-      if (query.trim()) params.set("q", query.trim());
-      const response = await fetch(`/api/locate?${params.toString()}`, { cache: "no-store" });
-      if (!response.ok) throw new Error("choices_unavailable");
-      const choices = decodeChoices(await response.json(), parentScopeCode);
-      if (choices.length > 0) {
-        writeCache(key, choices);
-        return choices;
+      if (query.trim()) {
+        // Search the bundled index locally; the picker never calls the NISR or locate APIs.
+        const localMatches = await loadStaticChoices("village", "", query);
+        writeCache(key, localMatches);
+        return localMatches;
       }
-      // A misconfigured/empty API response must not hide the bundled NISR list.
+      const params = new URLSearchParams({ level });
+      if (parentScopeCode) params.set("parent_id", parentScopeCode);
+      const response = await fetch(`/api/administrative-units?${params.toString()}`, { cache: "no-store" });
+      if (!response.ok) throw new Error("administrative_units_unavailable");
+      const choices = decodeChoices(await response.json(), parentScopeCode);
+      writeCache(key, choices);
+      return choices;
     } catch {
-      // Try the offline index after online lookup failure.
+      // Use the last cached or bundled static response when the database is offline.
     }
   }
 
@@ -179,7 +182,7 @@ async function loadChoices(level: BoundaryLevel, parentScopeCode: string, query:
 export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => void }) {
   const [level, setLevel] = useState<BoundaryLevel>("province");
   const [parentScopeCode, setParentScopeCode] = useState("");
-  const [history, setHistory] = useState<Array<{ level: BoundaryLevel; parentScopeCode: string }>>([]);
+  const [history, setHistory] = useState<Array<{ level: BoundaryLevel; parentScopeCode: string; name: string }>>([]);
   const [query, setQuery] = useState("");
   const [visibleChoices, setVisibleChoices] = useState<Choice[]>([]);
   const [busy, setBusy] = useState(true);
@@ -230,7 +233,7 @@ export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => v
       onSelect(choice.scope_code);
       return;
     }
-    setHistory((previous) => [...previous, { level, parentScopeCode }]);
+    setHistory((previous) => [...previous, { level, parentScopeCode, name: choice.name_kiny }]);
     setParentScopeCode(choice.scope_code);
     setLevel(NEXT_LEVEL[choice.level] ?? "village");
     setQuery("");
@@ -287,6 +290,20 @@ export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => v
           className="mt-3 inline-flex min-h-[40px] items-center gap-1 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-muted">
           <ChevronLeft className="h-4 w-4" aria-hidden /> Subira inyuma
         </button>
+      )}
+
+      {history.length > 0 && (
+        <nav aria-label="Aho uherereye mu rutonde" className="mb-2 text-xs text-muted-foreground">
+          <ol className="flex flex-wrap items-center gap-1">
+            {history.map((item, index) => (
+              <li key={item.parentScopeCode || item.level} className="inline-flex items-center gap-1">
+                {index > 0 && <span aria-hidden>/</span>}
+                <span>{item.name}</span>
+              </li>
+            ))}
+            <li aria-current="step" className="font-semibold text-foreground">{LABEL[level]}</li>
+          </ol>
+        </nav>
       )}
 
       <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
