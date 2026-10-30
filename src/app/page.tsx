@@ -51,23 +51,30 @@ export default function HomePage() {
     locate();
   }
 
-  // Calculate confidence wording per D1 F3
-  function getConfidenceWording(score: number): { text: string; colorClass: string } {
-    if (score >= 80) {
+  // Raw geometric overlap scores have not been calibrated to hit rates.
+  // Never label a GPS/map match "high confidence" from the score alone.
+  function getConfidenceWording(source: string | undefined): { text: string; colorClass: string } {
+    if (source === "manual") {
       return {
-        text: "GPS n'imbibi bihuye cyane",
-        colorClass: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300",
+        text: "Wahisemo uyu mudugudu — ushobora kuwuhindura",
+        colorClass: "text-blue-700 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300",
       };
     }
-    if (score >= 50) {
+    if (source === "nearest") {
       return {
-        text: "Biracyasaba kugenzurwa",
+        text: "Iri ni igereranya gusa — genzura cyangwa uhitemo undi mudugudu",
+        colorClass: "text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300",
+      };
+    }
+    if (source === "offline") {
+      return {
+        text: "Ibyabonetse offline — genzura izina ry'umudugudu",
         colorClass: "text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300",
       };
     }
     return {
-      text: "Ahantu ntiharamenyekana neza",
-      colorClass: "text-muted-foreground bg-muted",
+      text: "Icyifuzo cya GPS/ikarita — genzura umudugudu mbere yo kuwemeza",
+      colorClass: "text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300",
     };
   }
 
@@ -77,7 +84,7 @@ export default function HomePage() {
     ((data.source === "gps" || data.source === "map" || data.source === "offline") && topScore < 50)
   ));
   const confidenceInfo = data
-    ? getConfidenceWording(topScore)
+    ? getConfidenceWording(data.source)
     : { text: "Ahantu ntiharamenyekana neza", colorClass: "text-muted-foreground bg-muted" };
 
   async function handleFeedbackSubmit() {
