@@ -183,6 +183,14 @@ export function MapPinPicker({
               if (typeof name === "string" && name.trim()) {
                 layer.bindTooltip(name, { sticky: true, direction: "top" });
               }
+              // A village polygon tap selects its centre. The confirmation button
+              // uses the same onSelect callback as a free map tap.
+              layer.on("click", () => {
+                const center = layer.getBounds?.().getCenter?.();
+                if (center && Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
+                  updateMarker(center.lat, center.lng);
+                }
+              });
             },
           }).addTo(currentMap);
           const count = Array.isArray(geojson.features) ? geojson.features.length : 0;
