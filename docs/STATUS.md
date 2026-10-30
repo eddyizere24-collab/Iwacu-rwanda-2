@@ -2,8 +2,8 @@
 
 Date: 2026-10-30. PR #2 is open, draft and unmerged. No Production deploy or environment change was made.
 
-## 1. OVERALL: 42%
-Scoring T1–T9 plus 3 owner steps = 12 items: DONE-VERIFIED=1, DONE-UNVERIFIED=0.5, IN PROGRESS=0.25, BLOCKED/NOT STARTED=0. T1 1; T2 .25; T3 .25; T4 1; T5 .25; T6 .5; T7 .25; T8 1; T9 .5; owner steps 0. Total 5/12 = 41.7%, rounded to 42%.
+## 1. OVERALL: 40%
+Scoring T1–T9 plus 3 owner steps = 12 items: DONE-VERIFIED=1, DONE-UNVERIFIED=0.5, IN PROGRESS=0.25, BLOCKED/NOT STARTED=0. T1 1; T2 .25; T3 .25; T4 1; T5 .25; T6 .25; T7 .25; T8 1; T9 .5; owner steps 0. Total 4.75/12 = 39.6%, rounded to 40%.
 
 ## 2. TASK TABLE
 | ID | status | evidence |
@@ -13,7 +13,7 @@ Scoring T1–T9 plus 3 owner steps = 12 items: DONE-VERIFIED=1, DONE-UNVERIFIED=
 | T3 | IN PROGRESS | SQL hit-rate tables below. Current UI still has over-strong labels; safest label correction is not yet committed. |
 | T4 | DONE-VERIFIED | Commit 23dd7a1469c689dffbd1a3b3879c0019755a665e passed Actions run #126: https://github.com/eddyizere24-collab/Iwacu-rwanda-2/actions/runs/40979524132. |
 | T5 | IN PROGRESS | Error UI shows picker after locate errors; six failure modes are not end-to-end tested. |
-| T6 | DONE-UNVERIFIED | Service worker pre-caches static index on install; 1,593,361 bytes = 1.59 MB / 1.52 MiB. Airplane-mode use UNVERIFIED. |
+| T6 | IN PROGRESS | Service worker pre-caches the 1,593,361-byte (1.59 MB / 1.52 MiB) names/hierarchy index, but it has no representative coordinates. The offline polygon file requested by the GPS fallback is absent from the branch; Airplane-mode picker/GPS use UNVERIFIED. |
 | T7 | IN PROGRESS | URL variable is integration-stored/shared across environments; hostname and project ref are masked, UNVERIFIED. |
 | T8 | DONE-VERIFIED | Six district sample points and tap-only steps: [PRODUCTION-VERIFICATION.md](./PRODUCTION-VERIFICATION.md). |
 | T9 | DONE-UNVERIFIED | Advisor flags two backup tables and leaked-password protection. Admin login page has no password input/password sign-in; app-wide auth usage not exhaustively searched. |
@@ -46,7 +46,7 @@ Current Preview deployment is READY but on older commit 1cd3f2ea8ece5a9edafba15a
 ## 5. UNVERIFIED / RISKS
 - No live API 600-point, border, Kivu or NISR-missing-village results.
 - GPS denied, GPS timeout, no internet, Supabase down, outside Rwanda and no signal with cached list remain UNVERIFIED end-to-end.
-- Offline index cache is implemented but Airplane-mode picker use after one online load is not device-verified.
+- Offline index cache is implemented but contains names/hierarchy only, no representative points. useLocation.ts requests /offline/rwanda-village-boundaries.geojson for offline GPS confidence, but that file is absent from this branch and the service worker only pre-caches the index; offline GPS location will return OFFLINE_CACHE unless the file is supplied/cached by another means. Manual picker after one online load is still not device-verified.
 - Backups: public._bak_boundaries_geom and public._bak_boundaries_meta. KEEP until release verification plus a verified export, then consider DROP. Security Advisor says RLS/no policies (informational); earlier inspection found no browser grants.
 - Supabase Auth leaked-password protection is disabled. Admin login page has no password input or Supabase password sign-in, but stores a session-like object in localStorage after an auth-code field; that is a separate authentication risk. Whole-app password usage was not exhaustively searched.
 - Vercel latest Production: c6c01cbd3a24fea53df7f0fe1b0600dca58e137b, READY. Latest Preview: 1cd3f2ea8ece5a9edafba15a5e310a8119c00a0c, READY but behind PR head. Development has no hosted deployment. URL hostname/project ref are UNVERIFIED in Production/Preview/Development.
