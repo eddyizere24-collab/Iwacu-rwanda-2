@@ -12,6 +12,7 @@ import { createSupabasePublicClient, isSupabasePublicConfigured } from "@/lib/su
 import { createLocateError } from "@/lib/utils/errors";
 import { rankVillageCandidates } from "@/lib/location-ranking";
 import { listOfficialNationalLocationIndex, locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
+import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
 import offlineLocationIndex from "../../../../public/offline/location-index.json";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
@@ -316,11 +317,25 @@ async function respondWithOfficialFallback(
   accuracy: number,
   method: "gps" | "map" = "gps"
 ): Promise<NextResponse<LocateResponse>> {
-  const result = await locateFromOfficialNationalBoundaries(
+  const officialResult = await locateFromOfficialNationalBoundaries(
     latitude,
     longitude,
     accuracy
   );
+
+  // Keep the citizen out of a dead end when the official polygon service has
+  // a coverage gap or is unavailable. This uses a real village in the bundled
+  // index and marks it as an estimate based on representative points.
+  const staticEstimate = officialResult.status === "error"
+    ? nearestVillageEstimateFromIndex(
+        offlineLocationIndex,
+        latitude,
+        longitude,
+        accuracy,
+        "STATIC_REPRESENTATIVE_POINT_ESTIMATE"
+      )
+    : null;
+  const result: LocateResponse = staticEstimate ?? officialResult;
   const response: LocateResponse =
     result.status === "success" && method === "map" && result.source !== "nearest"
       ? { ...result, source: "map" }
