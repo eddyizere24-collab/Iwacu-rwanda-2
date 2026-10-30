@@ -11,6 +11,7 @@ import type { Feature, MultiPolygon, Polygon } from "geojson";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LocateResponse, LocateSuccess } from "@/types/location";
 import { createLocateError } from "@/lib/utils/errors";
+import { aggregateLocationHierarchy } from "@/lib/location-hierarchy";
 
 const NISR_QUERY_URL =
   "https://gis-server.statistics.gov.rw/server/rest/services/Hosted/Village_Boundary_2022/FeatureServer/3/query";
@@ -566,20 +567,72 @@ export async function locateFromOfficialNationalBoundaries(
     );
   }
 
+  // Aggregate all candidates before truncating the visible top three.
+  const parentNames = new Map<string, { name_kiny: string; name_eng: string | null; level: ConfidenceMatch["level"] }>();
+  for (const item of rawMatches) {
+    const provinceEng = field(item.props, "province");
+    const provinceKey = provinceEng.toLowerCase().replace(/\\s+/g, " ").trim();
+    const provinceNames: Record<string, string> = {
+      "city of kigali": "Umujyi wa Kigali",
+      "kigali city": "Umujyi wa Kigali",
+      "kigali": "Umujyi wa Kigali",
+      "southern province": "Intara y'Amajyepfo",
+      "western province": "Intara y'Iburengerazuba",
+      "northern province": "Intara y'Amajyaruguru",
+      "eastern province": "Intara y'Iburasirazuba",
+    };
+    parentNames.set(item.codes.province, {
+      name_kiny: provinceNames[provinceKey] ?? provinceEng,
+      name_eng: provinceEng || null,
+      level: "province",
+    });
+    for (const [code, name, level] of [
+      [item.codes.district, field(item.props, "district"), "district"],
+      [item.codes.sector, field(item.props, "sector"), "sector"],
+      [item.codes.cell, field(item.props, "cell"), "cell"],
+    ] as const) {
+      if (name) parentNames.set(code, { name_kiny: name, name_eng: name, level });
+    }
+    parentNames.set(item.codes.village, { name_kiny: item.name, name_eng: item.name, level: "village" });
+  }
+
+  const aggregates = aggregateLocationHierarchy(matches);
+  const hierarchyCandidates: NonNullable<LocateSuccess["hierarchyCandidates"]> = {};
+  const aggregatedHierarchy: LocateSuccess["hierarchy"] = {};
+  for (const level of ["province", "district", "sector", "cell", "village"] as const) {
+    const resolved = (aggregates[level] ?? []).slice(0, 3).flatMap((item) => {
+      const meta = parentNames.get(item.scope_code);
+      if (!meta?.name_kiny) return [];
+      return [{
+        scope_code: item.scope_code,
+        name_kiny: meta.name_kiny,
+        name_eng: meta.name_eng,
+        level,
+        confidence: item.confidence,
+        intersection_area_m2: item.intersection_area_m2,
+      } satisfies ConfidenceMatch];
+    });
+    if (resolved.length) {
+      hierarchyCandidates[level] = resolved;
+      aggregatedHierarchy[level] = resolved[0];
+    }
+  }
+
   const result: LocateSuccess = {
     status: "success",
     matches,
-    hierarchy,
+    hierarchy: aggregatedHierarchy.village ? aggregatedHierarchy : hierarchy,
+    hierarchyCandidates,
     // Official boundary data does not contain verified current leader contacts.
     leaders: [],
     source: nearestFallbackUsed ? "nearest" : "gps",
+    accuracy_m: safeAccuracyMeters,
   };
 
   if (nearestFallbackUsed) {
     result.warning = "NEAREST_VILLAGE_ESTIMATE";
   } else if (matches.length > 1 && matches[1].confidence > 5) {
-    result.warning =
-      "GPS_ACCURACY_AREA_CROSSES_VILLAGE_BOUNDARIES";
+    result.warning = "GPS_ACCURACY_AREA_CROSSES_VILLAGE_BOUNDARIES";
   }
   return result;
 }
