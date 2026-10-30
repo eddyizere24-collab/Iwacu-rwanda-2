@@ -178,6 +178,8 @@ export async function POST(
       leaders: [],
       source: isNearestEstimate ? "nearest" : method,
       accuracy_m: accuracy,
+      latitude,
+      longitude,
     };
     if (method === "ip" && !isNearestEstimate) {
       response.warning = "IP_NETWORK_LOCATION_COARSE_NOT_DEVICE_GPS";
@@ -513,7 +515,15 @@ async function respondWithOfficialFallback(
   const response: LocateResponse =
     result.status === "success" && method === "map" && result.source !== "nearest"
       ? { ...result, source: "map" }
-      : result;
+      : result.status === "success"
+        ? {
+            ...result,
+            source: result.source === "nearest" ? "nearest" : method,
+            accuracy_m: accuracy,
+            latitude,
+            longitude,
+          }
+        : result;
   const status =
     response.status === "success"
       ? 200
