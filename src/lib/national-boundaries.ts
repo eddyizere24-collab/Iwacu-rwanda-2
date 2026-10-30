@@ -351,7 +351,7 @@ export async function locateFromOfficialNationalBoundaries(
 
   const circleArea = turf.area(circle);
   if (!(circleArea > 0)) {
-    return createLocateError("GPS_ACCURACY_TOO_LOW", { accuracy: safeAccuracyMeters });
+    return createLocateError("POINT_IN_GAP", { reason: "accuracy_geometry_unavailable" });
   }
 
   const rawMatches: Array<{
