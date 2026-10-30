@@ -469,6 +469,23 @@ export function useLocation() {
     feedbackMethodRef.current = "map";
     setState({ ...INITIAL, status: "locating" });
 
+    const showCoordinateFallback = async (notice: string) => {
+      const fallback = await runOfflineConfidence(latitude, longitude, accuracy);
+      if (controller.signal.aborted) return;
+      const data = fallback.status === "success"
+        ? { ...fallback, source: "nearest" as const }
+        : createRwandaProvincePrior(false);
+      setState({
+        status: "success",
+        data,
+        errorCode: null,
+        errorMessageKiny: null,
+        errorMessageEng: null,
+        isOffline: typeof navigator !== "undefined" && navigator.onLine === false,
+        noticeKiny: notice,
+      });
+    };
+
     try {
       const response = await fetch("/api/locate", {
         method: "POST",
@@ -477,25 +494,13 @@ export function useLocation() {
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
-      if (response.status === 429) {
-        setState({
-          ...INITIAL,
-          status: "error",
-          errorCode: "RATE_LIMIT",
-          errorMessageKiny: "Wakoze ibisabwa byinshi cyane. Tegereza gato hanyuma ugerageze nanone.",
-          errorMessageEng: "Too many requests. Please wait a moment and try again.",
-        });
+      if (!response.ok) {
+        await showCoordinateFallback("Ikarita ntiyabashije kugenzura neza. Turakwereka igereranya rishingiye ku makuru y'ahantu abitswe.");
         return;
       }
       const json = (await response.json()) as LocateResponse;
       if (json.status === "error") {
-        setState({
-          ...INITIAL,
-          status: "error",
-          errorCode: json.code,
-          errorMessageKiny: json.message_kiny,
-          errorMessageEng: json.message_eng,
-        });
+        await showCoordinateFallback("Serivisi y'imbibi ntibonetse. Igereranya rishingiye ku makuru yemewe riracyagaragara.");
         return;
       }
       setState({
@@ -508,13 +513,7 @@ export function useLocation() {
       });
     } catch {
       if (controller.signal.aborted) return;
-      setState({
-        ...INITIAL,
-        status: "error",
-        errorCode: "NETWORK_ERROR",
-        errorMessageKiny: "Ikarita ntishoboye kugenzura ahantu. Gerageza interineti cyangwa uhitemo umudugudu ku rutonde.",
-        errorMessageEng: "The map location could not be checked. Reconnect or choose a village manually.",
-      });
+      await showCoordinateFallback("Interineti ntibashije kugenzura ikarita. Turakwereka igereranya rishingiye ku makuru yari abitswe.");
     }
   }, []);
 
