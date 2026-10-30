@@ -89,7 +89,7 @@ export function useLocation() {
       resolveFirstAnswer?.();
     };
 
-    const showSuccess = (json: LocateSuccess, effectiveAccuracy: number, fixAgeMs: number, notice?: string) => {
+    const showSuccess = (json: LocateSuccess, effectiveAccuracy: number, fixAgeMs: number, notice?: string, point?: { latitude: number; longitude: number }) => {
       if (controller.signal.aborted || effectiveAccuracy >= bestAccuracy) return;
       bestAccuracy = effectiveAccuracy;
       setState({
@@ -97,6 +97,8 @@ export function useLocation() {
         data: {
           ...json,
           accuracy_m: Number.isFinite(effectiveAccuracy) ? Math.round(effectiveAccuracy) : undefined,
+          latitude: point?.latitude ?? json.latitude,
+          longitude: point?.longitude ?? json.longitude,
           fix_age_ms: Math.max(0, fixAgeMs),
         },
         errorCode: null,
@@ -152,7 +154,7 @@ export function useLocation() {
           const result = kind === "last-known"
             ? { ...offline, source: "last-known" as const, warning: "LAST_KNOWN_FIX_WITH_AGE_INFLATED_RADIUS" }
             : offline;
-          showSuccess(result, effectiveAccuracy, fixAgeMs);
+          showSuccess(result, effectiveAccuracy, fixAgeMs, undefined, { latitude, longitude });
         } else {
           showNotice("Telefone iri kugerageza amakuru yari yarabonye mbere; ikarita iri hasi na yo iragufasha.");
         }
@@ -180,7 +182,7 @@ export function useLocation() {
           const result = kind === "last-known"
             ? { ...json, source: "last-known" as const, warning: "LAST_KNOWN_FIX_WITH_AGE_INFLATED_RADIUS" }
             : json;
-          showSuccess(result, effectiveAccuracy, fixAgeMs);
+          showSuccess(result, effectiveAccuracy, fixAgeMs, undefined, { latitude, longitude });
         } else {
           showNotice("Ibiranga aho uri biracyegeranywa; turacyategereje ikimenyetso cyiza kurushaho.");
         }
