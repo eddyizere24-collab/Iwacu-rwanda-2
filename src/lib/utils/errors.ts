@@ -17,21 +17,14 @@ export const D1_ERRORS: Record<string, D1ErrorInfo> = {
   },
   GPS_UNAVAILABLE: {
     title: "Telefone ntiyabonye aho uri",
-    message: "Reba ko Location ifunguye, hanyuma wongere ugerageze.",
+    message: "Ntitwashoboye kubona aho uri. Hitamo umudugudu wawe ku rutonde ruri hasi.",
     buttonText: "Ongera ugerageze",
     isOwnFault: false,
   },
   GPS_TIMEOUT: {
     title: "Birimo gutinda",
     message:
-      "GPS ntiyakubonye vuba. Sohoka cyangwa wegere idirishya, hanyuma wongere ugerageze.",
-    buttonText: "Ongera ugerageze",
-    isOwnFault: false,
-  },
-  GPS_ACCURACY_TOO_LOW: {
-    title: "Aho uri ntibigaragara neza",
-    message:
-      "Hagarara ahantu hafunguye, utari mu nzu, hanyuma wongere ugerageze.",
+      "GPS yafashe igihe kirekire. Ushobora gukomeza uhitamo umudugudu ku rutonde ruri hasi.",
     buttonText: "Ongera ugerageze",
     isOwnFault: false,
   },
