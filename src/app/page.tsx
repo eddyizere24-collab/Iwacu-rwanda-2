@@ -229,10 +229,10 @@ export default function HomePage() {
             <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
               void locateAtCoordinate(latitude, longitude, accuracy);
             }} />
-            {Number.isFinite(data.latitude) && Number.isFinite(data.longitude) && (
+            {Number.isFinite(data?.latitude) && Number.isFinite(data?.longitude) && (
               <NearbyLandmarks
-                latitude={data.latitude as number}
-                longitude={data.longitude as number}
+                latitude={data?.latitude as number}
+                longitude={data?.longitude as number}
                 onSelect={(latitude, longitude, accuracy) => {
                   void locateAtCoordinate(latitude, longitude, accuracy);
                 }}
