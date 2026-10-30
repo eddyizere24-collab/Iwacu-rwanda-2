@@ -1,13 +1,13 @@
 /**
- * IWACU RWANDA — Service Worker (v2)
+ * IWACU RWANDA — Service Worker (v3)
  * Network-first for all HTML/navigation requests so the app always displays
  * the latest up-to-date UI, with offline cache fallback.
  */
 
-const CACHE_VERSION = "iwacu-v2-nocache-html";
+const CACHE_VERSION = "iwacu-v3-representative-points";
 const SHELL_CACHE = `iwacu-shell-${CACHE_VERSION}`;
 const BOUNDARIES_CACHE = `iwacu-boundaries-${CACHE_VERSION}`;
-const LOCATION_INDEX_CACHE = "iwacu-location-index-v2-2026-10-30";
+const LOCATION_INDEX_CACHE = "iwacu-location-index-v3-2026-10-30";
 const LOCATION_INDEX_URL = "/api/locate?index=1";
 const LOCATION_INDEX_ASSET_URL = "/offline/location-index.json";
 
@@ -17,7 +17,7 @@ const LOCATION_INDEX_ASSET_URL = "/offline/location-index.json";
 self.addEventListener("install", (event) => {
   self.skipWaiting();
   event.waitUntil((async () => {
-    // Pre-cache the compact national hierarchy. The 1.6 MB JSON is served
+    // Pre-cache the compact national hierarchy. The 1.94 MB JSON with representative points is served
     // compressed by Vercel and avoids a first-use offline picker dead end.
     try {
       const cache = await caches.open(LOCATION_INDEX_CACHE);
