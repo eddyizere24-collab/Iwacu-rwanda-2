@@ -25,7 +25,10 @@ test("GPS network fix, GPS watch, IP and last-known fix start independently", ()
 
 test("UI never renders the known empty-search or insufficient-score dead-end wording", () => {
   assert.doesNotMatch(page, /Nta mazina ahuye n'ishakisha wabonye/);
+  assert.doesNotMatch(picker, /Nta mazina ahuye n'ishakisha wabonye/);
   assert.doesNotMatch(page, /Nta gipimo gihagije kuri uru rwego/);
+  assert.match(picker, /choices\.length > 0/);
+  assert.match(picker, /loadStaticChoices\(level, parentScopeCode, query\)/);
   assert.match(page, /data\.hierarchyCandidates/);
   assert.match(page, /noticeKiny/);
 });
