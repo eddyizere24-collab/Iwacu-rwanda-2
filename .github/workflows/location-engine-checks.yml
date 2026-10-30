@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [fix/never-fail-location-engine]
+    branches: [fix/never-fail-location-engine, wip/p1-location]
 
 permissions:
   contents: read
@@ -30,6 +30,8 @@ jobs:
           node-version: 24
       - name: Install locked dependencies
         run: npm install --no-audit --no-fund
+      - name: Reject accuracy-based location guards
+        run: npm run check:no-accuracy-rejection
       - name: Location ranking unit tests
         run: npm run test:location
       - name: TypeScript type check
