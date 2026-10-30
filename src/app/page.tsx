@@ -101,6 +101,12 @@ export default function HomePage() {
     ? getConfidenceWording(data.source)
     : { text: "Ahantu ntiharamenyekana neza", colorClass: "text-muted-foreground bg-muted" };
 
+  const mapInitialPoint = data &&
+    Number.isFinite(data.latitude) &&
+    Number.isFinite(data.longitude)
+    ? { latitude: data.latitude as number, longitude: data.longitude as number }
+    : null;
+
   async function handleFeedbackSubmit() {
     const scopeCode = data?.hierarchy?.village?.scope_code ?? data?.matches[0]?.scope_code;
     if (!scopeCode || !feedbackConsent) return;
@@ -147,7 +153,7 @@ export default function HomePage() {
             <LocationButton status={status} onClick={handleLocateClick} />
           </div>
           <div className="mx-auto mt-6 max-w-2xl space-y-4">
-            <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
+            <MapPinPicker initialPoint={mapInitialPoint} onSelect={(latitude, longitude, accuracy) => {
               void locateAtCoordinate(latitude, longitude, accuracy);
             }} />
             <details className="rounded-2xl border border-border bg-card p-3 text-left">
