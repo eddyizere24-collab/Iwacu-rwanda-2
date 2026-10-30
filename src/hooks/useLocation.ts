@@ -200,7 +200,10 @@ export function useLocation() {
           const result = kind === "last-known"
             ? { ...json, source: "last-known" as const, warning: "LAST_KNOWN_FIX_WITH_AGE_INFLATED_RADIUS" }
             : json;
-          showSuccess(result, effectiveAccuracy, fixAgeMs, undefined, { latitude, longitude });
+          const precisionNotice = effectiveAccuracy > 2_000
+            ? "Telefone yatanze ahantu hagereranyijwe (approximate). Niba ushaka kunoza aho uri, fungura Settings → Location → Google Location Accuracy; igisubizo kiracyakora kandi kiravugururwa."
+            : undefined;
+          showSuccess(result, effectiveAccuracy, fixAgeMs, precisionNotice, { latitude, longitude });
         } else {
           showNotice("Ibiranga aho uri biracyegeranywa; turacyategereje ikimenyetso cyiza kurushaho.");
         }
