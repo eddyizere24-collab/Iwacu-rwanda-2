@@ -271,11 +271,7 @@ export default function HomePage() {
                     ? "Wemejwe nawe"
                     : data.source === "nearest"
                       ? "Igereranya ry'umudugudu uri hafi"
-                      : data.source === "map"
-                        ? topScore >= 80
-                          ? "Ikarita n'imbibi bihuye cyane"
-                          : "Ahantu ku ikarita hasaba kugenzurwa"
-                        : confidenceInfo.text}
+                      : confidenceInfo.text}
                 </span>
               </span>
             </div>
