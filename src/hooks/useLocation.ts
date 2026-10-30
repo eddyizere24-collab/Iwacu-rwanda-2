@@ -91,16 +91,16 @@ export function useLocation() {
       resolveFirstAnswer?.();
     };
 
-    const showSuccess = (json: LocateSuccess, effectiveAccuracy: number, fixAgeMs: number, notice?: string, point?: { latitude: number; longitude: number }) => {
+    const showSuccess = (json: LocateSuccess, reportedRadiusMeters: number, fixAgeMs: number, notice?: string, point?: { latitude: number; longitude: number }) => {
       const hasCoordinates = Boolean(point || (Number.isFinite(json.latitude) && Number.isFinite(json.longitude)));
-      if (controller.signal.aborted || effectiveAccuracy > bestAccuracy || (effectiveAccuracy === bestAccuracy && bestHasCoordinates && !hasCoordinates)) return;
-      bestAccuracy = effectiveAccuracy;
+      if (controller.signal.aborted || reportedRadiusMeters > bestAccuracy || (reportedRadiusMeters === bestAccuracy && bestHasCoordinates && !hasCoordinates)) return;
+      bestAccuracy = reportedRadiusMeters;
       bestHasCoordinates = hasCoordinates;
       setState({
         status: "success",
         data: {
           ...json,
-          accuracy_m: Number.isFinite(effectiveAccuracy) ? Math.round(effectiveAccuracy) : undefined,
+          accuracy_m: Number.isFinite(reportedRadiusMeters) ? Math.round(reportedRadiusMeters) : undefined,
           latitude: point?.latitude ?? json.latitude,
           longitude: point?.longitude ?? json.longitude,
           fix_age_ms: Math.max(0, fixAgeMs),
@@ -118,47 +118,82 @@ export function useLocation() {
       setState((current) => ({ ...current, noticeKiny: notice }));
     };
 
-    const showRwandaPrior = async (notice: string) => {
-      if (controller.signal.aborted || firstAnswerResolved) return;
-      let prior: LocateSuccess = createRwandaProvincePrior(false);
-      let priorNotice = notice;
-
-      // A village the citizen explicitly confirmed before is a better fallback
-      // than an equal-province prior, but its weight decays with age and it is
-      // never described as the current GPS position.
+    // Start this cached, explicitly confirmed-place prior at t=0 with the IP
+    // lookup and last-known device fix. It must never be presented as GPS.
+    let lastConfirmedPrior: { data: LocateSuccess; ageMs: number } | null = null;
+    const lastConfirmedPriorPromise = (async () => {
       try {
         const savedRaw = localStorage.getItem("iwacu-confirmed-village");
-        if (savedRaw) {
-          const saved = JSON.parse(savedRaw) as { scope_code?: string; confirmed_at?: string };
-          const confirmedAt = saved.confirmed_at ? Date.parse(saved.confirmed_at) : Number.NaN;
-          const ageMs = Date.now() - confirmedAt;
-          if (saved.scope_code && Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 30 * 24 * 60 * 60 * 1000) {
-            const indexController = new AbortController();
-            const timeout = setTimeout(() => indexController.abort(), 1_200);
-            try {
-              const response = await fetch("/offline/location-index.json", {
-                cache: "force-cache",
-                signal: indexController.signal,
-              });
-              if (response.ok) {
-                const index = await response.json();
-                const confirmedPrior = createLastConfirmedVillagePrior(index, saved.scope_code, ageMs);
-                if (confirmedPrior) {
-                  prior = confirmedPrior;
-                  const ageDays = Math.max(0, Math.floor(ageMs / (24 * 60 * 60 * 1000)));
-                  priorNotice = `Nta kimenyetso gishya kiraboneka. Iri gereranya rishingiye ku mudugudu wari wemeje hashize iminsi ${ageDays}; si gihamya y'aho uri ubu.`;
-                }
-              }
-            } finally {
-              clearTimeout(timeout);
-            }
-          }
+        if (!savedRaw) return null;
+        const saved = JSON.parse(savedRaw) as { scope_code?: string; name_kiny?: string; confirmed_at?: string };
+        const confirmedAt = saved.confirmed_at ? Date.parse(saved.confirmed_at) : Number.NaN;
+        const ageMs = Date.now() - confirmedAt;
+        if (!saved.scope_code || !saved.name_kiny || !Number.isFinite(ageMs) || ageMs < 0 || ageMs > 30 * 24 * 60 * 60 * 1000) return null;
+
+        // The name and stable scope code were explicitly confirmed by the
+        // citizen. Show this minimal prior immediately; the cached hierarchy
+        // index below enriches it with the full parent path when available.
+        const weight = Math.max(1, Math.round(100 * Math.exp(-ageMs / (7 * 24 * 60 * 60 * 1000))));
+        const villageMatch = {
+          scope_code: saved.scope_code,
+          name_kiny: saved.name_kiny,
+          name_eng: null,
+          level: "village" as const,
+          confidence: weight,
+          intersection_area_m2: 0,
+        };
+        const quickPrior: LocateSuccess = {
+          status: "success",
+          matches: [villageMatch],
+          hierarchy: { village: villageMatch },
+          hierarchyCandidates: { village: [villageMatch] },
+          leaders: [],
+          source: "last-known",
+          warning: "LAST_CONFIRMED_VILLAGE_RECENCY_PRIOR_NOT_CURRENT_LOCATION",
+        };
+
+        const indexController = new AbortController();
+        const timeout = setTimeout(() => indexController.abort(), 1_000);
+        try {
+          const response = await fetch("/offline/location-index.json", {
+            cache: "force-cache",
+            signal: indexController.signal,
+          });
+          if (!response.ok) return { data: quickPrior, ageMs };
+          const index = await response.json();
+          const prior = createLastConfirmedVillagePrior(index, saved.scope_code, ageMs);
+          return { data: prior ?? quickPrior, ageMs };
+        } finally {
+          clearTimeout(timeout);
         }
       } catch {
-        // The national prior remains available if local storage/index is absent.
+        return null;
       }
+    })().then((value) => {
+      lastConfirmedPrior = value;
+      // A measured GPS/network fix always outranks this recency prior. The
+      // cached prior may replace only an uninformative IP/service-area prior.
+      if (value && !controller.signal.aborted && bestAccuracy >= 45_000) {
+        const ageDays = Math.max(0, Math.floor(value.ageMs / (24 * 60 * 60 * 1000)));
+        showSuccess(
+          value.data,
+          45_000,
+          value.ageMs,
+          "Nta kimenyetso gishya kiraboneka. Iri gereranya rishingiye ku mudugudu wari wemeje hashize iminsi " + ageDays + "; si gihamya y'aho uri ubu."
+        );
+      }
+      return value;
+    });
 
+    const showRwandaPrior = async (notice: string) => {
       if (controller.signal.aborted || firstAnswerResolved) return;
+      const prior = lastConfirmedPrior?.data ?? createRwandaProvincePrior(false);
+      const ageDays = lastConfirmedPrior
+        ? Math.max(0, Math.floor(lastConfirmedPrior.ageMs / (24 * 60 * 60 * 1000)))
+        : null;
+      const priorNotice = ageDays === null
+        ? notice
+        : "Nta kimenyetso gishya kiraboneka. Iri gereranya rishingiye ku mudugudu wari wemeje hashize iminsi " + ageDays + "; si gihamya y'aho uri ubu.";
       setState({
         status: "success",
         data: prior,
@@ -180,17 +215,17 @@ export function useLocation() {
     ) => {
       if (controller.signal.aborted) return;
       const fixAgeMs = Math.max(0, Date.now() - timestamp);
-      const effectiveAccuracy = Math.min(
+      const reportedRadiusMeters = Math.min(
         50_000,
         Math.max(1, Number.isFinite(rawAccuracy) ? rawAccuracy : 50_000) +
           (fixAgeMs / 1000) * (kind === "last-known" ? 20 : 5)
       );
-      if (effectiveAccuracy >= bestAccuracy) return;
+      if (reportedRadiusMeters >= bestAccuracy) return;
 
       lastFixRef.current = {
         latitude,
         longitude,
-        accuracy: effectiveAccuracy,
+        accuracy: reportedRadiusMeters,
         method: "gps",
         recordedAt: timestamp,
       };
@@ -198,7 +233,7 @@ export function useLocation() {
       if (kind !== "last-known") {
         try {
           localStorage.setItem(LAST_FIX_KEY, JSON.stringify({
-            latitude, longitude, accuracy: effectiveAccuracy, method: kind, recordedAt: timestamp,
+            latitude, longitude, accuracy: reportedRadiusMeters, method: kind, recordedAt: timestamp,
           }));
         } catch {
           // Location still works if browser storage is disabled.
@@ -206,12 +241,12 @@ export function useLocation() {
       }
 
       if (!online) {
-        const offline = await runOfflineConfidence(latitude, longitude, effectiveAccuracy);
+        const offline = await runOfflineConfidence(latitude, longitude, reportedRadiusMeters);
         if (offline.status === "success") {
           const result = kind === "last-known"
             ? { ...offline, source: "last-known" as const, warning: "LAST_KNOWN_FIX_WITH_AGE_INFLATED_RADIUS" }
             : offline;
-          showSuccess(result, effectiveAccuracy, fixAgeMs, effectiveAccuracy > 2_000 ? "Telefone yatanze ahantu hagereranyijwe (approximate). Turakoresha nubwo radius yaba nini; ushobora gukomeza kureba ibimenyetso byegereye." : undefined, { latitude, longitude });
+          showSuccess(result, reportedRadiusMeters, fixAgeMs, reportedRadiusMeters > 2_000 ? "Telefone yatanze ahantu hagereranyijwe (approximate). Turakoresha nubwo radius yaba nini; ushobora gukomeza kureba ibimenyetso byegereye." : undefined, { latitude, longitude });
         } else {
           showNotice("Telefone iri kugerageza amakuru yari yarabonye mbere; ikarita iri hasi na yo iragufasha.");
         }
@@ -225,7 +260,7 @@ export function useLocation() {
           body: JSON.stringify({
             latitude,
             longitude,
-            accuracy: effectiveAccuracy,
+            accuracy: reportedRadiusMeters,
             method: kind === "network" ? "network" : "gps",
           }),
           signal: controller.signal,
@@ -239,10 +274,19 @@ export function useLocation() {
           const result = kind === "last-known"
             ? { ...json, source: "last-known" as const, warning: "LAST_KNOWN_FIX_WITH_AGE_INFLATED_RADIUS" }
             : json;
-          const precisionNotice = effectiveAccuracy > 2_000
+          const precisionNotice = reportedRadiusMeters > 2_000
             ? "Telefone yatanze ahantu hagereranyijwe (approximate). Niba ushaka kunoza aho uri, fungura Settings → Location → Google Location Accuracy; igisubizo kiracyakora kandi kiravugururwa."
             : undefined;
-          showSuccess(result, effectiveAccuracy, fixAgeMs, precisionNotice, { latitude, longitude });
+          showSuccess(result, reportedRadiusMeters, fixAgeMs, precisionNotice, { latitude, longitude });
+        } else if (json.status === "outside") {
+          setState({
+            ...INITIAL,
+            status: "error",
+            errorCode: "OUTSIDE_RWANDA",
+            errorMessageKiny: "Ibi bipimo bya coordinates biri hanze y'u Rwanda. Nta mudugudu twahisemo.",
+            errorMessageEng: "These coordinates are outside Rwanda. No village was selected.",
+          });
+          signalFirstAnswer();
         } else {
           showNotice("Ibiranga aho uri biracyegeranywa; turacyategereje ikimenyetso cyiza kurushaho.");
         }
@@ -307,7 +351,7 @@ export function useLocation() {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       await Promise.race([
         firstAnswer,
-        new Promise<void>((resolve) => setTimeout(resolve, 4_000)),
+        new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
       ]);
       if (!firstAnswerResolved && !controller.signal.aborted) {
         await showRwandaPrior("Nta coordinates telefone yashoboye gutanga. Iyi ni prior y'ahantu haboneka, si aho uri hapimwe.");
@@ -341,7 +385,7 @@ export function useLocation() {
       navigator.geolocation.getCurrentPosition(
         (position) => onPosition(position, "network"),
         onGeolocationError,
-        { enableHighAccuracy: false, maximumAge: 300_000, timeout: 8_000 }
+        { enableHighAccuracy: false, maximumAge: 60_000, timeout: 8_000 }
       );
     } catch {
       showNotice("Ntabwo twashoboye gutangiza uburyo bwihuse bwo kumenya aho uri.");
@@ -361,7 +405,7 @@ export function useLocation() {
 
     await Promise.race([
       firstAnswer,
-      new Promise<void>((resolve) => setTimeout(resolve, 4_000)),
+      new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
     ]);
 
     if (!firstAnswerResolved && !controller.signal.aborted) {
@@ -460,6 +504,16 @@ export function useLocation() {
         });
         json = (await response.json()) as LocateResponse;
       }
+      if (json.status === "outside") {
+        setState({
+          ...INITIAL,
+          status: "error",
+          errorCode: "OUTSIDE_RWANDA",
+          errorMessageKiny: "Ibi bipimo bya coordinates biri hanze y'u Rwanda. Nta mudugudu twahisemo.",
+          errorMessageEng: "These coordinates are outside Rwanda. No village was selected.",
+        });
+        return;
+      }
       if (json.status !== "success") {
         setState({
           ...INITIAL,
@@ -542,6 +596,16 @@ export function useLocation() {
         return;
       }
       const json = (await response.json()) as LocateResponse;
+      if (json.status === "outside") {
+        setState({
+          ...INITIAL,
+          status: "error",
+          errorCode: "OUTSIDE_RWANDA",
+          errorMessageKiny: "Ibi bipimo bya coordinates biri hanze y'u Rwanda. Nta mudugudu twahisemo.",
+          errorMessageEng: "These coordinates are outside Rwanda. No village was selected.",
+        });
+        return;
+      }
       if (json.status === "error") {
         await showCoordinateFallback("Serivisi y'imbibi ntibonetse. Igereranya rishingiye ku makuru yemewe riracyagaragara.");
         return;
@@ -634,7 +698,7 @@ function getBestPosition(timeoutMs: number): Promise<GeolocationPosition> {
         {
           enableHighAccuracy: false,
           timeout: 5_000,
-          maximumAge: 300_000,
+          maximumAge: 60_000,
         }
       );
     };
@@ -661,7 +725,7 @@ function getBestPosition(timeoutMs: number): Promise<GeolocationPosition> {
       navigator.geolocation.getCurrentPosition(resolve, reject, {
         enableHighAccuracy: false,
         timeout: 5_000,
-        maximumAge: 300_000,
+        maximumAge: 60_000,
       });
     }
   });

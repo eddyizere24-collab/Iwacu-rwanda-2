@@ -32,6 +32,8 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Location ranking unit tests
         run: npm run test:location
+      - name: Accuracy rejection static gate
+        run: npm run check:no-accuracy-rejections
       - name: TypeScript type check
         run: npm run typecheck
       - name: Production build

@@ -23,6 +23,9 @@ import type { LocateResponse, LocateSuccess } from "@/types/location";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const CLASSIFIER_RPC = process.env.RWANDA_CLASSIFIER_RPC?.trim() || "classify_rwanda_coordinate";
+const DATASET_VERSION = process.env.RWANDA_BOUNDARY_DATASET_VERSION || "nisr-2022-db-v1";
+
 const LocateBodySchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
@@ -44,6 +47,12 @@ interface RpcRow {
 export async function POST(
   req: NextRequest
 ): Promise<NextResponse<LocateResponse>> {
+  let coordinateClassification: {
+    is_inside_rwanda: boolean;
+    distance_to_border_m: number | null;
+    nearest_border_district: string | null;
+    nearest_border_district_code: string | null;
+  } | null = null;
   let fallbackCoordinates: {
     latitude: number;
     longitude: number;
@@ -106,12 +115,53 @@ export async function POST(
     fallbackCoordinates = { latitude, longitude, accuracy, method };
 
     if (!isSupabasePublicConfigured()) {
-      // No database is configured: resolve against the official national NISR
-      // village polygons rather than returning a fabricated sample village.
-      return respondWithOfficialFallback(latitude, longitude, accuracy, method);
+      // Without the database classifier, do not claim a current village.
+      const prior = withLocationResponseContract(createRwandaProvincePrior(false), [method]);
+      return NextResponse.json({
+        ...prior,
+        flags: ["rwanda_classifier_unavailable"],
+      }, { status: 200 });
     }
 
     const supabase = createSupabasePublicClient();
+
+    // Classify the coordinate before any village polygon or NISR lookup.
+    const { data: classifierRows, error: classifierError } = await supabase.rpc(CLASSIFIER_RPC, {
+      p_lng: longitude,
+      p_lat: latitude,
+      p_buffer_m: 0,
+    });
+    if (classifierError || !Array.isArray(classifierRows) || classifierRows.length === 0) {
+      console.warn("[locate] Rwanda coordinate classifier unavailable:", classifierError?.message ?? "empty result");
+      const prior = withLocationResponseContract(createRwandaProvincePrior(false), [method]);
+      return NextResponse.json({
+        ...prior,
+        flags: ["rwanda_classifier_unavailable"],
+      }, { status: 200 });
+    }
+
+    coordinateClassification = classifierRows[0] as {
+      is_inside_rwanda: boolean;
+      distance_to_border_m: number | null;
+      nearest_border_district: string | null;
+      nearest_border_district_code: string | null;
+    };
+    if (!coordinateClassification.is_inside_rwanda) {
+      const borderDistance = coordinateClassification.distance_to_border_m == null ? Number.NaN : Number(coordinateClassification.distance_to_border_m);
+      if (Number.isFinite(borderDistance) && borderDistance <= 5_000) {
+        return await respondWithBorderZone(
+          supabase,
+          coordinateClassification.nearest_border_district_code,
+          borderDistance,
+          method
+        );
+      }
+      return NextResponse.json({
+        status: "outside",
+        outside_rwanda: true,
+        distance_to_border_m: Number.isFinite(borderDistance) ? borderDistance : null,
+      }, { status: 200 });
+    }
 
     // --- Call PostGIS confidence function ---
     const { data: rows, error: rpcError } = await supabase.rpc(
@@ -175,6 +225,13 @@ export async function POST(
     // Scores describe overlap with the uncertainty circle, not calibrated odds.
     const hierarchySummary = await buildHierarchicalSummary(supabase, realRows);
     const isNearestEstimate = matches[0].intersection_area_m2 === 0;
+    const path = {
+      intara: hierarchySummary.hierarchy.province?.name_kiny,
+      akarere: hierarchySummary.hierarchy.district?.name_kiny,
+      umurenge: hierarchySummary.hierarchy.sector?.name_kiny,
+      akagari: hierarchySummary.hierarchy.cell?.name_kiny,
+      umudugudu: hierarchySummary.hierarchy.village?.name_kiny,
+    };
     const response: LocateSuccess = {
       status: "success",
       matches: matches.slice(0, 3),
@@ -185,6 +242,13 @@ export async function POST(
       accuracy_m: accuracy,
       latitude,
       longitude,
+      level: hierarchySummary.hierarchy.village ? "village" : hierarchySummary.hierarchy.cell ? "cell" : hierarchySummary.hierarchy.sector ? "sector" : hierarchySummary.hierarchy.district ? "district" : "province",
+      path,
+      per_level_candidates: hierarchySummary.candidates,
+      top3_villages: (hierarchySummary.candidates?.village ?? matches.filter((match) => match.level === "village")).slice(0, 3),
+      signals_used: [method, "postgis_accuracy_circle", CLASSIFIER_RPC],
+      flags: isNearestEstimate ? ["nearest_estimate"] : [],
+      dataset_version: DATASET_VERSION,
     };
     if (method === "ip" && !isNearestEstimate) {
       response.warning = "IP_NETWORK_LOCATION_COARSE_NOT_DEVICE_GPS";
@@ -201,6 +265,33 @@ export async function POST(
     return NextResponse.json(response);
   } catch (err) {
     console.error("[locate] Unexpected error; returning a best available location fallback:", err);
+    if (coordinateClassification && !coordinateClassification.is_inside_rwanda) {
+      const distance = coordinateClassification.distance_to_border_m == null ? Number.NaN : Number(coordinateClassification.distance_to_border_m);
+      if (Number.isFinite(distance) && distance <= 5_000 && isSupabasePublicConfigured()) {
+        try {
+          return await respondWithBorderZone(
+            createSupabasePublicClient(),
+            coordinateClassification.nearest_border_district_code,
+            distance,
+            fallbackCoordinates?.method ?? "gps"
+          );
+        } catch {
+          // Fall through to the coarse outside response; never guess a village.
+        }
+      }
+      return NextResponse.json({
+        status: "outside",
+        outside_rwanda: true,
+        distance_to_border_m: Number.isFinite(distance) ? distance : null,
+      }, { status: 200 });
+    }
+    if (fallbackCoordinates && !coordinateClassification) {
+      const prior = withLocationResponseContract(createRwandaProvincePrior(false), [fallbackCoordinates.method, "classifier_unavailable"]);
+      return NextResponse.json({
+        ...prior,
+        flags: ["rwanda_classifier_unavailable"],
+      }, { status: 200 });
+    }
     if (fallbackCoordinates) {
       try {
         return await respondWithOfficialFallback(
@@ -214,7 +305,10 @@ export async function POST(
         // the official boundary fallback are unavailable.
       }
     }
-    return NextResponse.json(createRwandaProvincePrior(false), { status: 200 });
+    return NextResponse.json(
+      withLocationResponseContract(createRwandaProvincePrior(false), ["service_area_prior"]),
+      { status: 200 }
+    );
   }
 }
 
@@ -225,7 +319,130 @@ export async function POST(
 async function respondWithCountryOnlyPrior(
   hasRwandaIpCountry: boolean
 ): Promise<NextResponse<LocateResponse>> {
-  return NextResponse.json(createRwandaProvincePrior(hasRwandaIpCountry));
+  return NextResponse.json(
+    withLocationResponseContract(
+      createRwandaProvincePrior(hasRwandaIpCountry),
+      ["ip_country"]
+    )
+  );
+}
+
+function withLocationResponseContract(
+  result: LocateSuccess,
+  signals: string[] = [result.source]
+): LocateSuccess {
+  const hierarchy = result.hierarchy ?? {};
+  const candidates = result.hierarchyCandidates ?? {};
+  const villageCandidates = candidates.village ??
+    result.matches.filter((match) => match.level === "village");
+  const level = hierarchy.village ? "village"
+    : hierarchy.cell ? "cell"
+    : hierarchy.sector ? "sector"
+    : hierarchy.district ? "district"
+    : "province";
+  return {
+    ...result,
+    level,
+    path: result.path ?? {
+      intara: hierarchy.province?.name_kiny,
+      akarere: hierarchy.district?.name_kiny,
+      umurenge: hierarchy.sector?.name_kiny,
+      akagari: hierarchy.cell?.name_kiny,
+      umudugudu: hierarchy.village?.name_kiny,
+    },
+    per_level_candidates: result.per_level_candidates ?? candidates,
+    top3_villages: result.top3_villages ?? villageCandidates.slice(0, 3),
+    signals_used: result.signals_used ?? signals,
+    flags: result.flags ?? (result.source === "nearest" ? ["nearest_estimate"] : []),
+    dataset_version: result.dataset_version ?? DATASET_VERSION,
+  };
+}
+
+
+async function respondWithBorderZone(
+  supabase: ReturnType<typeof createSupabasePublicClient>,
+  districtCode: string | null,
+  distanceToBorder: number,
+  method: "gps" | "map" | "network" | "ip"
+): Promise<NextResponse<LocateResponse>> {
+  try {
+    if (!districtCode) throw new Error("nearest_border_district_missing");
+    const { data: district, error } = await supabase
+      .from("boundaries")
+      .select("scope_code, name_kiny, name_eng, level, parent_id")
+      .eq("scope_code", districtCode)
+      .eq("level", "district")
+      .is("valid_to", null)
+      .maybeSingle();
+    if (error || !district) throw new Error("nearest_border_district_not_found");
+
+    let province: { scope_code: string; name_kiny: string; name_eng: string | null; level: string } | null = null;
+    if (district.parent_id) {
+      const result = await supabase
+        .from("boundaries")
+        .select("scope_code, name_kiny, name_eng, level")
+        .eq("id", district.parent_id)
+        .eq("level", "province")
+        .is("valid_to", null)
+        .maybeSingle();
+      province = result.data;
+    }
+
+    const districtMatch: ConfidenceMatch = {
+      scope_code: district.scope_code,
+      name_kiny: district.name_kiny,
+      name_eng: district.name_eng,
+      level: "district",
+      confidence: 0,
+      intersection_area_m2: 0,
+    };
+    const hierarchy: LocateSuccess["hierarchy"] = { district: districtMatch };
+    const candidates: NonNullable<LocateSuccess["hierarchyCandidates"]> = { district: [districtMatch] };
+    const path: NonNullable<LocateSuccess["path"]> = { akarere: district.name_kiny };
+    if (province) {
+      const provinceMatch: ConfidenceMatch = {
+        scope_code: province.scope_code,
+        name_kiny: province.name_kiny,
+        name_eng: province.name_eng,
+        level: "province",
+        confidence: 0,
+        intersection_area_m2: 0,
+      };
+      hierarchy.province = provinceMatch;
+      candidates.province = [provinceMatch];
+      path.intara = province.name_kiny;
+    }
+
+    return NextResponse.json({
+      status: "success",
+      matches: [districtMatch],
+      hierarchy,
+      hierarchyCandidates: candidates,
+      leaders: [],
+      source: method,
+      level: "district",
+      path,
+      per_level_candidates: candidates,
+      top3_villages: [],
+      signals_used: [method, CLASSIFIER_RPC],
+      flags: ["border_zone"],
+      dataset_version: DATASET_VERSION,
+      warning: "BORDER_ZONE_NO_VILLAGE_CLAIM",
+    }, { status: 200 });
+  } catch {
+    const prior = createRwandaProvincePrior(false);
+    return NextResponse.json({
+      ...prior,
+      level: "province",
+      per_level_candidates: prior.hierarchyCandidates,
+      top3_villages: [],
+      signals_used: [method, CLASSIFIER_RPC],
+      flags: ["border_zone", "district_candidate_unavailable"],
+      dataset_version: DATASET_VERSION,
+      warning: "BORDER_ZONE_NO_VILLAGE_CLAIM",
+      distance_to_border_m: distanceToBorder,
+    }, { status: 200 });
+  }
 }
 
 async function buildHierarchicalSummary(
@@ -449,20 +666,22 @@ async function respondWithOfficialFallback(
       )
     : null;
   const result: LocateResponse = staticEstimate ?? officialResult;
-  if (result.status === "error") {
-    // Even when both the live NISR service and bundled representative index
-    // are unavailable, return an explicit service-area prior rather than an
-    // empty/dead-end response. This is not claimed to identify the person.
-    return NextResponse.json(createRwandaProvincePrior(method === "ip"), { status: 200 });
+  if (result.status !== "success") {
+    // An error or outside result from the official fallback cannot become a
+    // village claim. Return an explicit, labelled service-area prior instead.
+    return NextResponse.json(
+      withLocationResponseContract(createRwandaProvincePrior(method === "ip"), [method]),
+      { status: 200 }
+    );
   }
 
-  const response: LocateSuccess = {
+  const response = withLocationResponseContract({
     ...result,
     source: result.source === "nearest" ? "nearest" : method,
     accuracy_m: accuracy,
     latitude,
     longitude,
-  };
+  }, [method, "official_boundary_fallback"]);
   return NextResponse.json(response, { status: 200 });
 }
 
@@ -552,14 +771,14 @@ async function respondWithManualSelection(
     intersection_area_m2: 0,
   };
   const hierarchy = await buildHierarchy(supabase, selected);
-  const response: LocateSuccess = {
+  const response = withLocationResponseContract({
     status: "success",
     matches: [selected],
     hierarchy,
     leaders: [],
     source: "manual",
     warning: "USER_CONFIRMED",
-  };
+  }, ["manual"]);
   return NextResponse.json(response);
 }
 
@@ -626,14 +845,14 @@ function respondWithStaticManualSelection(scopeCode: string): NextResponse<Locat
   if (!village) {
     return NextResponse.json(createLocateError("NOT_FOUND"), { status: 404 });
   }
-  const response: LocateSuccess = {
+  const response = withLocationResponseContract({
     status: "success",
     matches: [village],
     hierarchy,
     leaders: [],
     source: "manual",
     warning: "USER_CONFIRMED_STATIC_INDEX",
-  };
+  }, ["manual", "offline_index"]);
   return NextResponse.json(response, {
     headers: { "Cache-Control": "public, max-age=300, stale-while-revalidate=3600" },
   });

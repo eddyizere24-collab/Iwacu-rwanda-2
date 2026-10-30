@@ -179,7 +179,7 @@ export function MapPinPicker({
           overlayRef.current = L.geoJSON(geojson, {
             style: () => ({ color: "#20603D", weight: 1, opacity: 0.8, fillColor: "#48A868", fillOpacity: 0.06 }),
             onEachFeature: (feature: any, layer: any) => {
-              const name = feature?.properties?.village;
+              const name = feature?.properties?.name_kiny ?? feature?.properties?.village;
               if (typeof name === "string" && name.trim()) {
                 layer.bindTooltip(name, { sticky: true, direction: "top" });
               }
@@ -187,7 +187,7 @@ export function MapPinPicker({
           }).addTo(currentMap);
           const count = Array.isArray(geojson.features) ? geojson.features.length : 0;
           setOverlayMessage(count > 0
-            ? `Imbibi z'imidugudu zagaragajwe: ${count}. Amakuru ashingiye ku ikarita ya NISR 2022.`
+            ? `Imbibi z'imidugudu zagaragajwe: ${count}. Amakuru y'imbibi yakuwe muri database.`
             : "Nta mbibi z'imidugudu zabonetse muri aka gace; gerageza kwegera cyangwa uhitemo ahandi.");
         } catch (error) {
           if (!controller.signal.aborted && !cancelled) {
@@ -279,7 +279,7 @@ export function MapPinPicker({
             </div>
           )}
           <p className="mt-2 text-[10px] text-muted-foreground">
-            Amakarita: &copy; OpenStreetMap; imbibi z'imidugudu: NISR 2022. IP cyangwa GPS ishobora kwibeshya; genzura umudugudu mbere yo kuwemeza.
+            Amakarita: &copy; OpenStreetMap; imbibi z'imidugudu zivanwa muri database. IP cyangwa GPS ishobora kwibeshya; genzura umudugudu mbere yo kuwemeza.
           </p>
         </div>
       )}

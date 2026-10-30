@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isLandmarksFeatureEnabled } from "@/lib/feature-flags";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +55,9 @@ function classify(tags: Record<string, string>): NearbyFeature["category"] | nul
  * may be identified by type, but no place name is ever invented.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  if (!isLandmarksFeatureEnabled()) {
+    return NextResponse.json({ status: "disabled", features: [], source: null }, { status: 200 });
+  }
   let body: unknown;
   try {
     body = await req.json();

@@ -28,6 +28,19 @@ export interface LocateRequest {
 
 export interface LocateSuccess {
   status: "success";
+  level?: "country" | "province" | "district" | "sector" | "cell" | "village";
+  path?: {
+    intara?: string;
+    akarere?: string;
+    umurenge?: string;
+    akagari?: string;
+    umudugudu?: string;
+  };
+  per_level_candidates?: Partial<Record<"province" | "district" | "sector" | "cell" | "village", ConfidenceMatch[]>>;
+  top3_villages?: ConfidenceMatch[];
+  signals_used?: string[];
+  flags?: string[];
+  dataset_version?: string;
   matches: ConfidenceMatch[];   // sorted by confidence DESC
   hierarchy: {
     country?: ConfidenceMatch;
@@ -59,4 +72,10 @@ export interface LocateError {
   details?: Record<string, unknown>;
 }
 
-export type LocateResponse = LocateSuccess | LocateError;
+export interface LocateOutside {
+  status: "outside";
+  outside_rwanda: true;
+  distance_to_border_m: number | null;
+}
+
+export type LocateResponse = LocateSuccess | LocateError | LocateOutside;

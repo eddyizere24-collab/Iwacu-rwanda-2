@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createSupabaseServiceClient, isSupabaseConfigured } from "@/lib/supabase/server";
+import { createSupabaseServiceClient, isSupabaseConfigured, createSupabasePublicClient, isSupabasePublicConfigured } from "@/lib/supabase/server";
 import { maskPhone } from "@/lib/security/mask";
 import type { LeaderPublic, LeaderRole } from "@/types/leader";
 
@@ -274,58 +274,85 @@ function answerForUnit(unit: OfficialUnit, leaders: LeaderPublic[]) {
 }
 
 export async function POST(req: NextRequest) {
-  let query = "";
   try {
     const parsed = SearchSchema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json({
         status: "error",
-        message_kiny: "Andika izina ry'ahantu cyangwa ikibazo ushaka kubaza.",
+        message_kiny: "Andika izina ry'ahantu ushaka gushakisha.",
       }, { status: 400 });
     }
-    query = parsed.data.query;
 
-    const unit = await findOfficialUnit(query);
-    if (unit) {
-      const leaders = await fetchLeadersForUnit(unit);
-      const suggestions = unit.level === "province"
-        ? [`Uturere tugize ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
-        : unit.level === "district"
-          ? [`Imirenge igize Akarere ka ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
-          : unit.level === "sector"
-            ? [`Utugari tugize Umurenge wa ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
-            : unit.level === "cell"
-              ? [`Imidugudu iri muri ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
-              : [`Akagari ${unit.cell} ibarizwamo`, `Umurenge wa ${unit.sector}`, "Menya aho ndi ukoresheje GPS"];
+    if (!isSupabasePublicConfigured()) {
+      return NextResponse.json({
+        status: "error",
+        message_kiny: "Serivisi yo gushakisha amazina ntibashije kugera kuri database.",
+      }, { status: 503 });
+    }
 
+    // Place lookup uses only search_places. Legacy findOfficialUnit and
+    // fetchLeadersForUnit remain above for the deferred leaders feature,
+    // but this route never calls them and never contacts live NISR.
+    const supabase = createSupabasePublicClient();
+    const { data, error } = await supabase.rpc("search_places", {
+      p_query: parsed.data.query,
+      p_limit: 12,
+    });
+
+    if (error) {
+      console.error("[ai-router] search_places failed:", error.message);
+      return NextResponse.json({
+        status: "error",
+        message_kiny: "Gushakisha amazina muri database ntibyashobotse ubu.",
+        results: [],
+      }, { status: 503 });
+    }
+
+    const results = (Array.isArray(data) ? data : []).map((row: Record<string, unknown>) => ({
+      place_id: String(row.place_id ?? ""),
+      scope_code: String(row.scope_code ?? ""),
+      level: String(row.level ?? ""),
+      name_kiny: String(row.name_kiny ?? ""),
+      name_eng: row.name_eng == null ? null : String(row.name_eng),
+      matched_name: String(row.matched_name ?? row.name_kiny ?? ""),
+      full_path: String(row.full_path ?? ""),
+      duplicate_count: Number(row.duplicate_count ?? 1),
+      match_score: Number(row.match_score ?? 0),
+    }));
+
+    if (results.length === 0) {
       return NextResponse.json({
         status: "success",
-        answer_kiny: answerForUnit(unit, leaders),
-        matched_leaders: leaders,
-        jurisdiction_info: {
-          province: unit.province,
-          district: unit.district,
-          sector: unit.sector,
-          cell: unit.cell,
-          village: unit.village,
-        },
-        suggestions,
-        source: "NISR Village Boundary 2022",
+        answer_kiny: "Nta hantu twabonye muri database bihuye n'iryo zina. Nta zina twahimbye cyangwa ngo duhindure.",
+        query: parsed.data.query,
+        results: [],
+        source: "search_places",
       });
     }
 
-    // No official boundary name was matched. Avoid inventing leaders or places.
+    const answerLines = results.slice(0, 8).map((item: {
+      name_kiny: string;
+      full_path: string;
+      duplicate_count: number;
+    }) => {
+      const duplicateText = item.duplicate_count > 1
+        ? " (iri zina rikoreshwa ahantu " + item.duplicate_count + ")"
+        : "";
+      return item.name_kiny + " — " + item.full_path + duplicateText;
+    });
+
     return NextResponse.json({
       status: "success",
-      answer_kiny: "Ntabwo twabonye izina ry'ahantu rihuye n'ibyo wanditse muri dosiye y'imbibi za NISR. Gerageza izina ry'umudugudu, akagari, umurenge, akarere cyangwa intara uko ryanditswe.",
-      matched_leaders: [],
-      suggestions: ["Menya aho ndi ukoresheje GPS", "Shakisha Akarere ka Gasabo", "Shakisha Umujyi wa Kigali"],
+      answer_kiny: "Ahantu twabonye muri database:\n" + answerLines.join("\n"),
+      query: parsed.data.query,
+      results,
+      source: "search_places",
     });
   } catch (error) {
-    console.error("[ai-router] error:", error);
+    console.error("[ai-router] search_places request error:", error);
     return NextResponse.json({
       status: "error",
-      message_kiny: "Serivisi y'amakarita ntiyabonetse. Ongera ugerageze nyuma.",
-    }, { status: 502 });
+      message_kiny: "Serivisi yo gushakisha amazina ntibashije gukora ubu.",
+    }, { status: 503 });
   }
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { isLandmarksFeatureEnabled, runLandmarksRequest } from "@/lib/feature-flags";
 import { ChevronDown, ChevronUp, Landmark, MapPin, RefreshCw, Waves } from "lucide-react";
 
 type NearbyFeature = {
@@ -13,7 +14,7 @@ type NearbyFeature = {
 };
 
 type ContextResponse = {
-  status: "ok" | "unavailable";
+  status: "ok" | "unavailable" | "disabled";
   features?: NearbyFeature[];
   source?: string;
   queried_radius_m?: number;
@@ -46,18 +47,22 @@ export function NearbyLandmarks({
   const [message, setMessage] = useState("");
 
   async function loadNearby() {
-    if (loading) return;
+    if (!isLandmarksFeatureEnabled() || loading) return;
     setOpen(true);
     if (result) return;
     setLoading(true);
     setMessage("");
     try {
-      const response = await fetch("/api/location-context", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ latitude, longitude }),
+      const guarded = await runLandmarksRequest(async () => {
+        const response = await fetch("/api/location-context", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ latitude, longitude }),
+        });
+        return { response, json: await response.json() as ContextResponse };
       });
-      const json = await response.json() as ContextResponse;
+      if (guarded.status === "disabled") return;
+      const { response, json } = guarded.value;
       if (!response.ok || json.status === "unavailable") {
         setMessage("Amakuru y'ahantu hafi ntaraboneka ubu. Ikarita na GPS biracyakora ukwabyo.");
       } else {

@@ -9,6 +9,8 @@ import { AiSearchAssistant } from "@/components/AiSearchAssistant";
 import { VillagePicker } from "@/components/VillagePicker";
 import { MapPinPicker } from "@/components/MapPinPicker";
 import { NearbyLandmarks } from "@/components/NearbyLandmarks";
+import { LocationReportButton } from "@/components/LocationReportButton";
+import { isLandmarksFeatureEnabled } from "@/lib/feature-flags";
 import {
   MapPin,
   RotateCcw,
@@ -235,7 +237,7 @@ export default function HomePage() {
             <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
               void locateAtCoordinate(latitude, longitude, accuracy);
             }} />
-            {Number.isFinite(data?.latitude) && Number.isFinite(data?.longitude) && (
+            {isLandmarksFeatureEnabled() && Number.isFinite(data?.latitude) && Number.isFinite(data?.longitude) && (
               <NearbyLandmarks
                 latitude={data?.latitude as number}
                 longitude={data?.longitude as number}
@@ -289,6 +291,12 @@ export default function HomePage() {
               {noticeKiny}
             </p>
           )}
+          {data.flags?.includes("border_zone") && (
+            <p role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-sm text-amber-800 dark:text-amber-300">
+              Uri hafi y'imbibi z'u Rwanda cyangwa ku nkengero z'ikiyaga. Turerekana Akarere kari hafi gusa; ntituratangaza umudugudu kuko imbibi z'iki gice zikeneye kugenzurwa.
+            </p>
+          )}
+          <LocationReportButton data={data} />
 
           {/* D1 F1 & F2 Hierarchy Place Card */}
           <div className="overflow-hidden rounded-3xl border border-border bg-card p-6 shadow-sm">
