@@ -2,8 +2,8 @@
 
 Date: 2026-10-30. PR #2 is open, draft and unmerged. No Production deploy or environment change was made.
 
-## 1. OVERALL: 44%
-Scoring T1–T9 plus 3 owner steps = 12 items: DONE-VERIFIED=1, DONE-UNVERIFIED=0.5, IN PROGRESS=0.25, BLOCKED/NOT STARTED=0. T1 1; T2 .5; T3 .25; T4 1; T5 .25; T6 .5; T7 .25; T8 1; T9 .5; owner steps 0. Total 5.25/12 = 43.75%, rounded to 44%.
+## 1. OVERALL: 42%
+Scoring T1–T9 plus 3 owner steps = 12 items: DONE-VERIFIED=1, DONE-UNVERIFIED=0.5, IN PROGRESS=0.25, BLOCKED/NOT STARTED=0. T1 1; T2 .25; T3 .25; T4 1; T5 .25; T6 .5; T7 .25; T8 1; T9 .5; owner steps 0. Total 5/12 = 41.7%, rounded to 42%.
 
 ## 2. TASK TABLE
 | ID | status | evidence |
@@ -11,7 +11,7 @@ Scoring T1–T9 plus 3 owner steps = 12 items: DONE-VERIFIED=1, DONE-UNVERIFIED=
 | T1 | DONE-VERIFIED | Backward-compatible RPC migration in PR #2; signature/output checked against main in existing report. |
 | T2 | IN PROGRESS | Fresh 600-point SQL test and hard border/Kivu SQL diagnostics below; no 600-point run through deployed /api/locate. NISR-missing-village API tests UNVERIFIED. |
 | T3 | IN PROGRESS | SQL hit-rate tables below. Current UI still has over-strong labels; safest label correction is not yet committed. |
-| T4 | DONE-VERIFIED | Commit ad0a69da31972c8aae8eb73e02fb92d5ff7ca503 passed Actions run #124: https://github.com/eddyizere24-collab/Iwacu-rwanda-2/actions/runs/40979340218. |
+| T4 | DONE-VERIFIED | Commit 23dd7a1469c689dffbd1a3b3879c0019755a665e passed Actions run #126: https://github.com/eddyizere24-collab/Iwacu-rwanda-2/actions/runs/40979524132. |
 | T5 | IN PROGRESS | Error UI shows picker after locate errors; six failure modes are not end-to-end tested. |
 | T6 | DONE-UNVERIFIED | Service worker pre-caches static index on install; 1,593,361 bytes = 1.59 MB / 1.52 MiB. Airplane-mode use UNVERIFIED. |
 | T7 | IN PROGRESS | URL variable is integration-stored/shared across environments; hostname and project ref are masked, UNVERIFIED. |
