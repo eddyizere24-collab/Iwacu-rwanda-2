@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ConfidenceMatch } from "@/types/boundary";
+import type { ConfidenceMatch } from "../types/boundary";
 import { aggregateLocationHierarchy } from "./location-hierarchy";
 
 const row = (scope_code: string, confidence: number, area: number): ConfidenceMatch => ({
