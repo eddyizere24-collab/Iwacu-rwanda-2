@@ -489,7 +489,7 @@ async function respondWithOfficialFallback(
   latitude: number,
   longitude: number,
   accuracy: number,
-  method: "gps" | "map" = "gps"
+  method: "gps" | "map" | "network" | "ip" = "gps"
 ): Promise<NextResponse<LocateResponse>> {
   const officialResult = await locateFromOfficialNationalBoundaries(
     latitude,
