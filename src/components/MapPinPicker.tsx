@@ -55,8 +55,10 @@ function loadLeaflet(): Promise<any> {
 
 export function MapPinPicker({
   onSelect,
+  initialPoint = null,
 }: {
   onSelect: (latitude: number, longitude: number, accuracyMeters: number) => void;
+  initialPoint?: Point | null;
 }) {
   const [open, setOpen] = useState(false);
   const [mapStatus, setMapStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -102,15 +104,21 @@ export function MapPinPicker({
         // The map can still open at the Rwanda overview without browser storage.
       }
 
-      const initialCenter = lastKnown
-        ? [lastKnown.latitude, lastKnown.longitude] as [number, number]
+      const estimatedPoint = initialPoint &&
+        Number.isFinite(initialPoint.latitude) &&
+        Number.isFinite(initialPoint.longitude)
+        ? initialPoint
+        : null;
+      const mapStart = estimatedPoint ?? lastKnown;
+      const initialCenter = mapStart
+        ? [mapStart.latitude, mapStart.longitude] as [number, number]
         : [-1.94, 29.87] as [number, number];
       const map = L.map(containerRef.current, {
         zoomControl: true,
         scrollWheelZoom: false,
         minZoom: 7,
         maxZoom: 18,
-      }).setView(initialCenter, lastKnown ? 14 : 8);
+      }).setView(initialCenter, mapStart ? 14 : 8);
       mapRef.current = map;
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -131,7 +139,7 @@ export function MapPinPicker({
         }
       };
 
-      if (lastKnown) updateMarker(lastKnown.latitude, lastKnown.longitude);
+      if (mapStart) updateMarker(mapStart.latitude, mapStart.longitude);
       map.on("click", (event: any) => updateMarker(event.latlng.lat, event.latlng.lng));
 
       const refreshOverlay = async () => {
@@ -211,7 +219,7 @@ export function MapPinPicker({
       markerRef.current = null;
       overlayRef.current = null;
     };
-  }, [open]);
+  }, [open, initialPoint?.latitude, initialPoint?.longitude]);
 
   function closeMap() {
     setOpen(false);
