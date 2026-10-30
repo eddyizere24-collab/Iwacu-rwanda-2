@@ -174,7 +174,7 @@ async function loadChoices(level: BoundaryLevel, parentScopeCode: string, query:
   }
   writeCache(key, []);
   return [];
-
+}
 
 export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => void }) {
   const [level, setLevel] = useState<BoundaryLevel>("province");
