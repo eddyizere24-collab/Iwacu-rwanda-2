@@ -172,7 +172,7 @@ export function useLocation() {
           const result = kind === "last-known"
             ? { ...offline, source: "last-known" as const, warning: "LAST_KNOWN_FIX_WITH_AGE_INFLATED_RADIUS" }
             : offline;
-          showSuccess(result, effectiveAccuracy, fixAgeMs, undefined, { latitude, longitude });
+          showSuccess(result, effectiveAccuracy, fixAgeMs, effectiveAccuracy > 2_000 ? "Telefone yatanze ahantu hagereranyijwe (approximate). Turakoresha nubwo radius yaba nini; ushobora gukomeza kureba ibimenyetso byegereye." : undefined, { latitude, longitude });
         } else {
           showNotice("Telefone iri kugerageza amakuru yari yarabonye mbere; ikarita iri hasi na yo iragufasha.");
         }
@@ -287,7 +287,7 @@ export function useLocation() {
       if (error.code === error.PERMISSION_DENIED) {
         showNotice("Uburenganzira bwa Location burafunze. Bufungure muri Settings → Apps → Chrome → Permissions → Location. Turacyagerageza IP cyangwa aho telefone yari iherutse kubona.");
       } else if (error.code === error.POSITION_UNAVAILABLE) {
-        showNotice("Telefone ntiyabonye GPS/Wi-Fi ihagije. Fungura Location Accuracy muri Settings → Location → Location Services; ibindi bimenyetso biracyageragezwa.");
+        showNotice("Reba ko Location ya telefone iri ON: Settings → Location. Kunoza indoor fix, fungura Location Services → Google Location Accuracy na Wi-Fi/Bluetooth scanning. Igisubizo kiriho ntigihagarara.");
       } else if (error.code === error.TIMEOUT) {
         showNotice("GPS iracyashakisha. Ikimenyetso cya network/Wi-Fi cyangwa aho telefone yari iherutse kubona gishobora gutanga igisubizo mbere.");
       }
