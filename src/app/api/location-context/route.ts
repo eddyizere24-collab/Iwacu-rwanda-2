@@ -54,6 +54,9 @@ function classify(tags: Record<string, string>): NearbyFeature["category"] | nul
  * may be identified by type, but no place name is ever invented.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  if (process.env.NEXT_PUBLIC_FEATURE_LANDMARKS !== "true") {
+    return NextResponse.json({ disabled: true }, { status: 200, headers: { "Cache-Control": "no-store" } });
+  }
   let body: unknown;
   try {
     body = await req.json();
