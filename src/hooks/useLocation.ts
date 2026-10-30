@@ -444,6 +444,7 @@ export function useLocation() {
         errorMessageKiny: null,
         errorMessageEng: null,
         isOffline: typeof navigator !== "undefined" && !navigator.onLine,
+        noticeKiny: null,
       });
     } catch {
       if (controller.signal.aborted) return;
@@ -510,6 +511,7 @@ export function useLocation() {
         errorMessageKiny: null,
         errorMessageEng: null,
         isOffline: false,
+        noticeKiny: null,
       });
     } catch {
       if (controller.signal.aborted) return;
