@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { LocateResponse, LocateSuccess, LocationErrorCode } from "@/types/location";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
@@ -25,6 +25,7 @@ export interface UseLocationState {
   errorMessageKiny: string | null;
   errorMessageEng: string | null;
   isOffline: boolean;
+  noticeKiny: string | null;
 }
 
 const INITIAL: UseLocationState = {
@@ -34,181 +35,289 @@ const INITIAL: UseLocationState = {
   errorMessageKiny: null,
   errorMessageEng: null,
   isOffline: false,
+  noticeKiny: null,
 };
 
 const GPS_TIMEOUT_MS = 15_000;
+const LAST_FIX_KEY = "iwacu-last-location-fix";
 
 export function useLocation() {
   const [state, setState] = useState<UseLocationState>(INITIAL);
   const abortRef = useRef<AbortController | null>(null);
   const lastFixRef = useRef<{ latitude: number; longitude: number; accuracy: number; method: FeedbackMethod; recordedAt: number } | null>(null);
   const feedbackMethodRef = useRef<FeedbackMethod>("manual");
+  const watchIdRef = useRef<number | null>(null);
+  const watchStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const stopLocationWatch = useCallback(() => {
+    if (watchIdRef.current !== null && typeof navigator !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    if (watchStopTimerRef.current) {
+      clearTimeout(watchStopTimerRef.current);
+      watchStopTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    stopLocationWatch();
+  }, [stopLocationWatch]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
+    stopLocationWatch();
     setState(INITIAL);
-  }, []);
+  }, [stopLocationWatch]);
 
   const locate = useCallback(async () => {
     abortRef.current?.abort();
+    stopLocationWatch();
     const controller = new AbortController();
     abortRef.current = controller;
+    setState({ ...INITIAL, status: "requesting_gps" });
 
-    setState((s) => ({
-      ...s,
-      status: "requesting_gps",
-      errorCode: null,
-      errorMessageKiny: null,
-      errorMessageEng: null,
-      data: null,
-    }));
+    const online = typeof navigator !== "undefined" && navigator.onLine !== false;
+    let bestAccuracy = Number.POSITIVE_INFINITY;
+    let firstAnswerResolved = false;
+    let resolveFirstAnswer: (() => void) | null = null;
+    const firstAnswer = new Promise<void>((resolve) => { resolveFirstAnswer = resolve; });
+    const signalFirstAnswer = () => {
+      if (firstAnswerResolved) return;
+      firstAnswerResolved = true;
+      resolveFirstAnswer?.();
+    };
 
-    // --- Browser support check ---
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setState({
-        ...INITIAL,
-        status: "error",
-        errorCode: "BROWSER_NOT_SUPPORTED",
-        errorMessageKiny:
-          "Browser yawe ntabwo ishyigikiwe. Koresha Chrome, Firefox cyangwa Safari ya vuba.",
-        errorMessageEng:
-          "Your browser is not supported. Please use a recent Chrome, Firefox or Safari.",
-      });
-      return;
-    }
-
-    const isOnline = typeof navigator.onLine === "boolean" ? navigator.onLine : true;
-
-    try {
-      const position = await getBestPosition(GPS_TIMEOUT_MS);
-      if (controller.signal.aborted) return;
-
-      const { latitude, longitude, accuracy } = position.coords;
-      const fixMethod: FeedbackMethod = isOnline ? "gps" : "offline";
-      lastFixRef.current = { latitude, longitude, accuracy, method: fixMethod, recordedAt: Date.now() };
-      feedbackMethodRef.current = fixMethod;
-
-      setState((s) => ({ ...s, status: "locating" }));
-
-      // --- Offline path ---
-      if (!isOnline) {
-        const offlineResult = await runOfflineConfidence(
-          latitude,
-          longitude,
-          accuracy
-        );
-        if (controller.signal.aborted) return;
-
-        if (offlineResult.status === "error") {
-          setState({
-            ...INITIAL,
-            status: "error",
-            isOffline: true,
-            errorCode: offlineResult.code,
-            errorMessageKiny: offlineResult.message_kiny,
-            errorMessageEng: offlineResult.message_eng,
-          });
-          return;
-        }
-
-        setState({
-          status: "success",
-          data: offlineResult,
-          errorCode: null,
-          errorMessageKiny: null,
-          errorMessageEng: null,
-          isOffline: true,
-        });
-        return;
-      }
-
-      // --- Online path: call /api/locate ---
-      const res = await fetch("/api/locate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ latitude, longitude, accuracy }),
-        signal: controller.signal,
-      });
-
-      if (controller.signal.aborted) return;
-
-      if (res.status === 429) {
-        setState({
-          ...INITIAL,
-          status: "error",
-          errorCode: "RATE_LIMIT",
-          errorMessageKiny:
-            "Wakoze ibisabwa byinshi cyane. Tegereza gato hanyuma ugerageze nanone.",
-          errorMessageEng:
-            "Too many requests. Please wait a moment and try again.",
-        });
-        return;
-      }
-
-      const json = (await res.json()) as LocateResponse;
-
-      if (json.status === "error") {
-        setState({
-          ...INITIAL,
-          status: "error",
-          errorCode: json.code,
-          errorMessageKiny: json.message_kiny,
-          errorMessageEng: json.message_eng,
-        });
-        return;
-      }
-
+    const showSuccess = (json: LocateSuccess, effectiveAccuracy: number, fixAgeMs: number, notice?: string) => {
+      if (controller.signal.aborted || effectiveAccuracy >= bestAccuracy) return;
+      bestAccuracy = effectiveAccuracy;
       setState({
         status: "success",
-        data: json,
+        data: {
+          ...json,
+          accuracy_m: Number.isFinite(effectiveAccuracy) ? Math.round(effectiveAccuracy) : undefined,
+          fix_age_ms: Math.max(0, fixAgeMs),
+        },
         errorCode: null,
         errorMessageKiny: null,
         errorMessageEng: null,
-        isOffline: false,
+        isOffline: !online,
+        noticeKiny: notice ?? null,
       });
-    } catch (err) {
-      if (controller.signal.aborted) return;
+      signalFirstAnswer();
+    };
 
-      if (err instanceof GeolocationPositionError) {
-        if (err.code === err.PERMISSION_DENIED) {
-          setState({
-            ...INITIAL,
-            status: "error",
-            errorCode: "GPS_DENIED",
-            errorMessageKiny:
-              "Wanze ko twakoresha GPS. Fungura amarebe y’uburyo bwo gukoresha ahantu cyangwa shakisha manuelle.",
-            errorMessageEng:
-              "Location permission denied. Enable location access or use manual search.",
-          });
-          return;
+    const showNotice = (notice: string) => {
+      setState((current) => ({ ...current, noticeKiny: notice }));
+    };
+
+    const submitFix = async (
+      latitude: number,
+      longitude: number,
+      rawAccuracy: number,
+      timestamp: number,
+      kind: "network" | "gps" | "last-known"
+    ) => {
+      if (controller.signal.aborted) return;
+      const fixAgeMs = Math.max(0, Date.now() - timestamp);
+      const effectiveAccuracy = Math.min(
+        50_000,
+        Math.max(1, Number.isFinite(rawAccuracy) ? rawAccuracy : 50_000) +
+          (fixAgeMs / 1000) * (kind === "last-known" ? 20 : 5)
+      );
+      if (effectiveAccuracy >= bestAccuracy) return;
+
+      lastFixRef.current = {
+        latitude,
+        longitude,
+        accuracy: effectiveAccuracy,
+        method: "gps",
+        recordedAt: timestamp,
+      };
+
+      if (kind !== "last-known") {
+        try {
+          localStorage.setItem(LAST_FIX_KEY, JSON.stringify({
+            latitude, longitude, accuracy: effectiveAccuracy, method: kind, recordedAt: timestamp,
+          }));
+        } catch {
+          // Location still works if browser storage is disabled.
         }
-        const unavailable = err.code === err.POSITION_UNAVAILABLE;
-        setState({
-          ...INITIAL,
-          status: "error",
-          errorCode: unavailable ? "GPS_UNAVAILABLE" : "GPS_TIMEOUT",
-          errorMessageKiny: unavailable
-            ? "Ntitwashoboye kubona aho uri. Hitamo umudugudu wawe ku rutonde ruri hasi."
-            : "GPS yafashe igihe kirekire. Ushobora gukomeza uhitamo umudugudu ku rutonde ruri hasi.",
-          errorMessageEng: unavailable
-            ? "The phone could not determine your location. Choose your village from the list below."
-            : "Location timed out. You can continue by choosing your village from the list below.",
-        });
+      }
+
+      if (!online) {
+        const offline = await runOfflineConfidence(latitude, longitude, effectiveAccuracy);
+        if (offline.status === "success") {
+          const result = kind === "last-known"
+            ? { ...offline, source: "last-known" as const, warning: "LAST_KNOWN_FIX_WITH_AGE_INFLATED_RADIUS" }
+            : offline;
+          showSuccess(result, effectiveAccuracy, fixAgeMs);
+        } else {
+          showNotice("Telefone iri kugerageza amakuru yari yarabonye mbere; ikarita iri hasi na yo iragufasha.");
+        }
         return;
       }
 
-      // Network / abort / other
-      setState({
-        ...INITIAL,
-        status: "error",
-        errorCode: "NETWORK_ERROR",
-        errorMessageKiny:
-          "Ikibazo cy’urukurikirane. Gerageza nanone cyangwa reba niba ufite interineti.",
-        errorMessageEng:
-          "Network error. Check your connection and try again.",
-      });
+      try {
+        const response = await fetch("/api/locate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            latitude,
+            longitude,
+            accuracy: effectiveAccuracy,
+            method: kind === "network" ? "network" : "gps",
+          }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          showNotice("Ikimenyetso cy'ahantu kiracyagenzurwa; turimo kugerageza ubundi buryo.");
+          return;
+        }
+        const json = (await response.json()) as LocateResponse;
+        if (json.status === "success") {
+          const result = kind === "last-known"
+            ? { ...json, source: "last-known" as const, warning: "LAST_KNOWN_FIX_WITH_AGE_INFLATED_RADIUS" }
+            : json;
+          showSuccess(result, effectiveAccuracy, fixAgeMs);
+        } else {
+          showNotice("Ibiranga aho uri biracyegeranywa; turacyategereje ikimenyetso cyiza kurushaho.");
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          showNotice("Interineti yatinze. Turacyagerageza ibimenyetso bihari kuri telefone.");
+        }
+      }
+    };
+
+    const submitIpEstimate = async () => {
+      if (!online || controller.signal.aborted) return;
+      try {
+        const response = await fetch("/api/locate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "ip" }),
+          signal: controller.signal,
+        });
+        if (!response.ok) return;
+        const json = (await response.json()) as LocateResponse;
+        if (json.status === "success") {
+          showSuccess(
+            json,
+            json.accuracy_m ?? 50_000,
+            0,
+            "Iri ni igereranya rishingiye ku muyoboro wa interineti, si GPS nyayo."
+          );
+        }
+      } catch {
+        // IP geolocation is best-effort; GPS/network signals continue independently.
+      }
+    };
+
+    // Start a cached last-known fix and Vercel IP lookup at once.
+    try {
+      const raw = localStorage.getItem(LAST_FIX_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as {
+          latitude?: number; longitude?: number; accuracy?: number; recordedAt?: number;
+        };
+        if (
+          Number.isFinite(saved.latitude) &&
+          Number.isFinite(saved.longitude) &&
+          Number.isFinite(saved.accuracy) &&
+          Number.isFinite(saved.recordedAt)
+        ) {
+          void submitFix(
+            saved.latitude as number,
+            saved.longitude as number,
+            saved.accuracy as number,
+            saved.recordedAt as number,
+            "last-known"
+          );
+        }
+      }
+    } catch {
+      // Ignore invalid cached coordinates.
     }
-  }, []);
+    void submitIpEstimate();
+
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      await Promise.race([
+        firstAnswer,
+        new Promise<void>((resolve) => setTimeout(resolve, 8_000)),
+      ]);
+      if (!firstAnswerResolved && !controller.signal.aborted) {
+        setState({
+          ...INITIAL,
+          status: "error",
+          errorCode: "BROWSER_NOT_SUPPORTED",
+          errorMessageKiny: "Telefone ntitanga aho iri kuri ubu. Reba niba Location ifunguye cyangwa ukoreshe ikarita iri hasi.",
+          errorMessageEng: "This browser cannot provide a location fix. Check phone Location settings or use the map below.",
+        });
+      }
+      return;
+    }
+
+    const onPosition = (position: GeolocationPosition, kind: "network" | "gps") => {
+      void submitFix(
+        position.coords.latitude,
+        position.coords.longitude,
+        position.coords.accuracy,
+        position.timestamp,
+        kind
+      );
+    };
+
+    const onGeolocationError = (error: GeolocationPositionError) => {
+      if (error.code === error.PERMISSION_DENIED) {
+        showNotice("Uburenganzira bwa Location burafunze. Bufungure muri Settings → Apps → Chrome → Permissions → Location. Turacyagerageza IP cyangwa aho telefone yari iherutse kubona.");
+      } else if (error.code === error.POSITION_UNAVAILABLE) {
+        showNotice("Telefone ntiyabonye GPS/Wi-Fi ihagije. Fungura Location Accuracy muri Settings → Location → Location Services; ibindi bimenyetso biracyageragezwa.");
+      } else if (error.code === error.TIMEOUT) {
+        showNotice("GPS iracyashakisha. Ikimenyetso cya network/Wi-Fi cyangwa aho telefone yari iherutse kubona gishobora gutanga igisubizo mbere.");
+      }
+    };
+
+    // Both requests start at second zero. A quick network/cached fix does not
+    // wait for the GPS watch to time out.
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (position) => onPosition(position, "network"),
+        onGeolocationError,
+        { enableHighAccuracy: false, maximumAge: 300_000, timeout: 8_000 }
+      );
+    } catch {
+      showNotice("Ntabwo twashoboye gutangiza uburyo bwihuse bwo kumenya aho uri.");
+    }
+
+    try {
+      watchIdRef.current = navigator.geolocation.watchPosition(
+        (position) => onPosition(position, "gps"),
+        onGeolocationError,
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 45_000 }
+      );
+      // Keep refining after the first answer, then stop to save battery.
+      watchStopTimerRef.current = setTimeout(stopLocationWatch, 60_000);
+    } catch {
+      showNotice("GPS ntishoboye gutangira; uburyo bwihuse n'igereranya rya IP birakomeza.");
+    }
+
+    await Promise.race([
+      firstAnswer,
+      new Promise<void>((resolve) => setTimeout(resolve, 12_000)),
+    ]);
+
+    if (!firstAnswerResolved && !controller.signal.aborted) {
+      setState((current) => ({
+        ...current,
+        status: "error",
+        errorCode: "GPS_TIMEOUT",
+        errorMessageKiny: "Nta kimenyetso cyihuse kirabonetse. Gushakisha birakomeza; ushobora kureba ikarita iri hasi.",
+        errorMessageEng: "No quick location signal arrived. Location watching continues; use the map below or try near a window.",
+      }));
+    }
+  }, [stopLocationWatch]);
 
   const chooseVillage = useCallback(async (scopeCode: string, selectionMethod: FeedbackMethod = "manual") => {
     feedbackMethodRef.current = typeof navigator !== "undefined" && !navigator.onLine && selectionMethod === "manual" ? "offline" : selectionMethod;
