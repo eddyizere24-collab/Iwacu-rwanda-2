@@ -183,11 +183,18 @@ export function MapPinPicker({
               if (typeof name === "string" && name.trim()) {
                 layer.bindTooltip(name, { sticky: true, direction: "top" });
               }
+              // Polygon taps select its centre; confirmation calls the same location callback as map taps.
+              layer.on("click", () => {
+                const center = layer.getBounds?.().getCenter?.();
+                if (center && Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
+                  updateMarker(center.lat, center.lng);
+                }
+              });
             },
           }).addTo(currentMap);
           const count = Array.isArray(geojson.features) ? geojson.features.length : 0;
           setOverlayMessage(count > 0
-            ? `Imbibi z'imidugudu zagaragajwe: ${count}. Amakuru ashingiye ku ikarita ya NISR 2022.`
+            ? `Imbibi z'imidugudu zagaragajwe: ${count}. Amakuru ashingiye ku ikarita ya IWACU database.`
             : "Nta mbibi z'imidugudu zabonetse muri aka gace; gerageza kwegera cyangwa uhitemo ahandi.");
         } catch (error) {
           if (!controller.signal.aborted && !cancelled) {
