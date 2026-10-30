@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "@/hooks/useLocation";
 import { LocationButton } from "@/components/LocationButton";
 import { ErrorDisplay } from "@/components/ErrorDisplay";
@@ -36,18 +36,36 @@ export default function HomePage() {
   const [showConsentModal, setShowConsentModal] = useState(false);
   const [feedbackConsent, setFeedbackConsent] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const locationStartedAtRef = useRef<number | null>(null);
+  const [lastElapsedMs, setLastElapsedMs] = useState<number | null>(null);
+  const [reportCopied, setReportCopied] = useState(false);
+
+  function beginLocationTiming() {
+    locationStartedAtRef.current = Date.now();
+    setLastElapsedMs(null);
+    setReportCopied(false);
+  }
+
+  useEffect(() => {
+    if (status === "success" && locationStartedAtRef.current !== null) {
+      setLastElapsedMs(Math.max(0, Date.now() - locationStartedAtRef.current));
+      locationStartedAtRef.current = null;
+    }
+  }, [status, data]);
 
   // Trigger locate with D1 pre-permission consent explanation
   function handleLocateClick() {
     if (status === "idle" || status === "error") {
       setShowConsentModal(true);
     } else {
+      beginLocationTiming();
       locate();
     }
   }
 
   function handleConsentConfirm() {
     setShowConsentModal(false);
+    beginLocationTiming();
     locate();
   }
 
@@ -120,6 +138,85 @@ export default function HomePage() {
     }
   }
 
+  async function handleCopyLocationReport() {
+    if (!data) return;
+    type ReportNode = { name_kiny?: string; scope_code?: string; confidence?: number };
+    const reportData = data as typeof data & {
+      level?: string;
+      path?: Record<string, ReportNode | null | undefined>;
+      candidates?: Record<string, ReportNode[] | undefined>;
+      signals_used?: string[];
+      flags?: string[];
+      dataset_version?: string;
+      fix_age_ms?: number;
+    };
+    const path = reportData.path ?? {};
+    const pathEntries: Array<[string, ReportNode | null | undefined]> = [
+      ["Intara", path.intara ?? data.hierarchy?.province],
+      ["Akarere", path.akarere ?? data.hierarchy?.district],
+      ["Umurenge", path.umurenge ?? data.hierarchy?.sector],
+      ["Akagari", path.akagari ?? data.hierarchy?.cell],
+      ["Umudugudu", path.umudugudu ?? data.hierarchy?.village],
+    ];
+    const pathText = pathEntries.map(([label, node]) =>
+      label + ": " + (node?.name_kiny ?? "ntibizwi") + " [" + (node?.scope_code ?? "-") + "]"
+    ).join("\\n");
+    const candidates = reportData.candidates ?? {};
+    const percentageRows: Array<[string, ReportNode[]]> = [
+      ["Intara", candidates.intara ?? candidates.province ?? []],
+      ["Akarere", candidates.akarere ?? candidates.district ?? []],
+      ["Umurenge", candidates.umurenge ?? candidates.sector ?? []],
+      ["Akagari", candidates.akagari ?? candidates.cell ?? []],
+      ["Umudugudu", candidates.umudugudu ?? candidates.village ?? data.hierarchyCandidates?.village ?? []],
+    ];
+    const percentagesText = percentageRows.map(([label, rows]) => {
+      const values = rows.slice(0, 3).map((item) =>
+        (item.name_kiny ?? item.scope_code ?? "?") + ": " +
+        (Number.isFinite(item.confidence) ? Math.round(item.confidence as number) + "% score" : "nta score")
+      );
+      return label + ": " + (values.length ? values.join(", ") : "nta candidate");
+    }).join("\\n");
+    const signals = reportData.signals_used ?? [data.source ?? "unknown"];
+    const flags = reportData.flags ?? [];
+    const commitSha =
+      process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA ??
+      process.env.NEXT_PUBLIC_COMMIT_SHA ??
+      "ntaboneka muri browser";
+    const report = [
+      "IWACU RWANDA 2 — LOCATION TEST REPORT",
+      "signals: " + (signals.join(", ") || "none"),
+      "accuracy_m: " + (data.accuracy_m ?? "unknown"),
+      "level: " + (reportData.level ?? "unknown"),
+      "path:",
+      pathText,
+      "percentages/scores (not calibrated probabilities):",
+      percentagesText,
+      "timings: elapsed_ms=" + (lastElapsedMs ?? "not-recorded") + "; fix_age_ms=" + (reportData.fix_age_ms ?? "unknown"),
+      "flags: " + (flags.join(", ") || "none"),
+      "dataset_version: " + (reportData.dataset_version ?? "unknown"),
+      "commit_sha: " + commitSha,
+      "recorded_at: " + new Date().toISOString(),
+    ].join("\\n");
+
+    try {
+      await navigator.clipboard.writeText(report);
+      setReportCopied(true);
+      window.setTimeout(() => setReportCopied(false), 3000);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = report;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      setReportCopied(copied);
+      window.setTimeout(() => setReportCopied(false), 3000);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-10">
       {/* 1. HERO PLACE CARD WITH RWANDAN SUN ("Rugo y'Izuba") */}
@@ -154,6 +251,7 @@ export default function HomePage() {
           </div>
           <div className="mx-auto mt-6 max-w-2xl space-y-4">
             <MapPinPicker initialPoint={mapInitialPoint} onSelect={(latitude, longitude, accuracy) => {
+              beginLocationTiming();
               void locateAtCoordinate(latitude, longitude, accuracy);
             }} />
             <details className="rounded-2xl border border-border bg-card p-3 text-left">
@@ -161,7 +259,7 @@ export default function HomePage() {
                 Si hano? Hindura (gukosora aho hantu)
               </summary>
               <div className="mt-3">
-                <VillagePicker onSelect={chooseVillage} />
+                <VillagePicker onSelect={(scopeCode) => { beginLocationTiming(); chooseVillage(scopeCode); }} />
               </div>
             </details>
           </div>
@@ -263,7 +361,7 @@ export default function HomePage() {
       {status === "success" && data && (
         <section className="space-y-6 animate-in fade-in duration-300">
           {/* Top Return / Search Again Action */}
-          <div className="flex items-center justify-between border-b border-border pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
             <button
               type="button"
               onClick={reset}
@@ -272,6 +370,16 @@ export default function HomePage() {
               <RotateCcw className="h-3.5 w-3.5" />
               <span>Ongera ushake</span>
             </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleCopyLocationReport()}
+                className="min-h-[44px] rounded-xl border border-border px-3 py-2 text-xs font-semibold hover:bg-muted"
+              >
+                Koporora raporo
+              </button>
+              {reportCopied && <span role="status" className="text-xs text-emerald-700">Raporo yakoporowe.</span>}
+            </div>
           </div>
 
           <div className="mx-auto max-w-2xl space-y-3">
