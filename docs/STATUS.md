@@ -9,7 +9,7 @@ Scoring T1–T9 plus 3 owner steps = 12 items: DONE-VERIFIED=1, DONE-UNVERIFIED=
 | ID | status | evidence |
 |---|---|---|
 | T1 | DONE-VERIFIED | Backward-compatible RPC migration in PR #2; signature/output checked against main in existing report. |
-| T2 | IN PROGRESS | Fresh 600-point SQL test and hard border/Kivu SQL diagnostics below; no 600-point run through deployed /api/locate. NISR-missing-village API tests UNVERIFIED. |
+| T2 | IN PROGRESS | Fresh 600-point SQL test and 417 near-border cases below; repeatable read-only hard-case SQL: [verify-location-border-suite-2026-10-30.sql](https://github.com/eddyizere24-collab/Iwacu-rwanda-2/blob/fix/never-fail-location-engine/sql/verify-location-border-suite-2026-10-30.sql). No 600-point /api/locate run; NISR-missing-village API tests UNVERIFIED. |
 | T3 | IN PROGRESS | SQL hit-rate tables below. Current UI still has over-strong labels; safest label correction is not yet committed. |
 | T4 | DONE-VERIFIED | Commit 23dd7a1469c689dffbd1a3b3879c0019755a665e passed Actions run #126: https://github.com/eddyizere24-collab/Iwacu-rwanda-2/actions/runs/40979524132. |
 | T5 | IN PROGRESS | Error UI shows picker after locate errors; six failure modes are not end-to-end tested. |
