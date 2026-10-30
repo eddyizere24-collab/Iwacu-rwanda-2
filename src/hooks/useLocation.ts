@@ -303,6 +303,8 @@ export function useLocation() {
       // Ignore invalid cached coordinates.
     }
     void submitIpEstimate();
+    // Start the last-confirmed-place / province prior immediately; GPS and network fixes may refine it.
+    void showRwandaPrior("Turimo gutangira n'ahantu wari warigeze kwemeza mu gihe GPS/network bikishakisha.");
 
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       await Promise.race([
@@ -361,7 +363,7 @@ export function useLocation() {
 
     await Promise.race([
       firstAnswer,
-      new Promise<void>((resolve) => setTimeout(resolve, 4_000)),
+      new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
     ]);
 
     if (!firstAnswerResolved && !controller.signal.aborted) {
@@ -634,7 +636,7 @@ function getBestPosition(timeoutMs: number): Promise<GeolocationPosition> {
         {
           enableHighAccuracy: false,
           timeout: 5_000,
-          maximumAge: 300_000,
+          maximumAge: 60_000,
         }
       );
     };
@@ -661,7 +663,7 @@ function getBestPosition(timeoutMs: number): Promise<GeolocationPosition> {
       navigator.geolocation.getCurrentPosition(resolve, reject, {
         enableHighAccuracy: false,
         timeout: 5_000,
-        maximumAge: 300_000,
+        maximumAge: 60_000,
       });
     }
   });
