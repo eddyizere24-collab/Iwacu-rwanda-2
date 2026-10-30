@@ -112,12 +112,15 @@ export function calculateConfidenceOffline(
     return createLocateError("OFFLINE_CACHE");
   }
 
+  const safeAccuracy = Number.isFinite(accuracy)
+    ? Math.min(Math.max(accuracy, 1), 50_000)
+    : 100;
   const point = turf.point([longitude, latitude]);
-  const circle = accuracyCircle(longitude, latitude, accuracy);
+  const circle = accuracyCircle(longitude, latitude, safeAccuracy);
   const circleArea = turf.area(circle); // m²
 
   if (circleArea <= 0) {
-    return createLocateError("GPS_ACCURACY_TOO_LOW", { accuracy });
+    return createLocateError("POINT_IN_GAP", { reason: "accuracy_geometry_unavailable" });
   }
 
   // 2. Intersect with every village polygon
