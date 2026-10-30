@@ -1,95 +1,62 @@
 # IWACU RWANDA 2 — STATUS
 
-Date: 2026-10-30. PR #2 is open, draft and unmerged. No Production environment values, deployment, or promotion were changed.
+Date: 2026-10-30. This report describes repository state and the PR #3 candidate only. No Production deployment, Supabase data, environment variable, integration, or project setting was changed.
 
-## 1. OVERALL: 46%
+## 1. OVERALL: 19%
 
-This is a task-completion index, **not a location-accuracy score**. Score T1–T9 plus three owner actions (12 items): DONE-VERIFIED=1, DONE-UNVERIFIED=0.5, IN PROGRESS=0.25, BLOCKED/NOT STARTED=0. T1=1; T2=.25; T3=1; T4=1; T5=.25; T6=.25; T7=.25; T8=1; T9=.5; owner actions=0. Total 5.5/12=45.83%, rounded to 46%.
+This is a task-completion index, **not a location-accuracy score**. Equal weight across T0–T7 (8 tasks): T0 DONE-UNVERIFIED = 0.5; T1 IN PROGRESS = 0.25; T3, T4 and T5 IN PROGRESS = 0.25 each; T2, T6 and T7 = 0. Total 1.5/8 = 18.75%, rounded to 19%.
 
 ## 2. TASK TABLE
 
 | ID | status | evidence |
 |---|---|---|
-| T1 | DONE-VERIFIED | Migration `supabase/migrations/20261030000000_location_confidence_backward_compatible.sql`; same input/output signature as main checked. |
-| T2 | IN PROGRESS | 600-point API suite and 450 near-border API tests below. 600-point run used Preview commit `29159954d590912919338f999bd61d20389105a5`; 450 near-border run used older Preview commit `1cd3f2ea8ece5a9edafba15a5e310a8119c00a0c`. ~21 NISR-missing villages still not individually tested. |
-| T3 | DONE-VERIFIED | Commit `29159954d590912919338f999bd61d20389105a5` removes the score-based “bihuye cyane” map label; auto GPS/map outputs use cautious wording. |
-| T4 | DONE-VERIFIED | Current code commit `7b07bf1c74544e5483199f71ff3eea9c3d5f81c4` passed Actions run #156: https://github.com/eddyizere24-collab/Iwacu-rwanda-2/actions/runs/40981875853. |
-| T5 | IN PROGRESS | Current-branch local API with no Supabase credentials returned village estimates for a Kivu gap and outside-Rwanda coordinates. Browser/GPS failure scenarios and visible picker still need device testing. |
-| T6 | IN PROGRESS | Index now contains 17,422 records with representative coordinates; 1,937,955 bytes (1.94 MB / 1.85 MiB). Service Worker cache version bumped to v3. Airplane-mode picker/GPS not tested on a phone. |
-| T7 | IN PROGRESS | Vercel masks the shared URL variable, so current Supabase project refs remain UNVERIFIED per environment. Latest Preview deploy of current source could not be created because the Vercel API reached its daily deployment limit. |
-| T8 | DONE-VERIFIED | Six-point tap-only checklist: [PRODUCTION-VERIFICATION.md](./PRODUCTION-VERIFICATION.md). Six sample points returned the expected village on current-code local API and the earlier tested Preview. |
-| T9 | DONE-UNVERIFIED | Two backup tables and leaked-password warning reviewed; full app-wide authentication audit not complete. |
+| T0 | DONE-UNVERIFIED | GitHub confirms main, PR #2 merged at `3baf94cacbea18d0191c42fcd9774990ad50c901`, PR #3 open. Supabase project and boundary counts verified by connector/SQL. Vercel project is visible in team project listing, but deployment/environment API reads fail with 403/404; production URL, env hostnames and live phone bugs were not independently verified. |
+| T1 | IN PROGRESS | PR #3 head `07c865e6a81ee5eca4fdb042b1de9b19a196550d`. CI run #182 is in progress; location unit-test step passed, TypeScript check was still running, production build pending at last check. No gate-complete API/device/calibration evidence. |
+| T2 | NOT STARTED | No H3/geohash/national grid index built, compressed, measured or compared with PostGIS. |
+| T3 | IN PROGRESS | PR #3 has a map-pin correction component and NISR boundary fallback code, but the complete offline/light vector map with roads/landmarks has not been proven or released. |
+| T4 | IN PROGRESS | PR #3 adds a nearby-landmarks route/component backed by OpenStreetMap/Overpass. Live coverage, stability, and indoor usefulness have not been verified. |
+| T5 | IN PROGRESS | The OSM route classifies water/wetland features, but no independent Rwanda-wide hydrography dataset is installed or validated. Coverage and nearest-village behavior remain unverified. |
+| T6 | NOT STARTED | No complete website-versus-native-Android feasibility report has been published in this PR. |
+| T7 | BLOCKED | No current-head HTTP test campaign through `/api/locate`; no real-phone test. Vercel access/build limit currently prevents dependable candidate Preview verification. |
 
 ## 3. TEST RESULTS — 2026-10-30
 
-### 600 synthetic test points through `/api/locate`
+| Date | SHA / run | Test | Route |
+|---|---|---|---|
+| 2026-10-30 | `07c865e6a81ee5eca4fdb042b1de9b19a196550d`, Actions run #182 (`41021218009`) | Location ranking/unit-test step passed; TypeScript check was in progress; Production build pending at last observation. | Unit tests only; not `/api/locate` |
+| 2026-10-30 | Supabase project `buexgewxypvkqmphvfec` | SQL inventory: 17,423 boundaries; 14,823 villages; 2,148 cells; 416 sectors; 30 districts; 5 provinces; 0 leaders. PostGIS 3.3.7 and RPC signature checked. | SQL only; not a location accuracy test |
+| Historical | `29159954d590912919338f999bd61d20389105a5` | Previous 600-point synthetic POST suite recorded in the old report. It is not PR #3 head and is not evidence for the current candidate. | Historical Preview `/api/locate` |
+| Historical | `1cd3f2ea8ece5a9edafba15a5e310a8119c00a0c` | Previous 450-point near-border suite recorded in the old report. It is not PR #3 head and is not evidence for the current candidate. | Historical Preview `/api/locate` |
 
-**Deployment:** Preview `https://iwacu-rwanda-2-o6pz51pir-ahabona.vercel.app`, source commit `29159954d590912919338f999bd61d20389105a5`. The new SQL function was exercised through the route, not SQL-only. Five villages per district across 30 districts; each interior point was offset by the shown distance and submitted with the same accuracy radius.
+No new `/api/locate` HTTP POST run was executed against PR #3 head. Calibration is not available: polygon-overlap and representative-point weights are scores, not verified probabilities. No calibration table or village/cell/sector/district hit-rate table at 100 m–20 km exists for the PR #3 head.
 
-| Offset / accuracy | Samples | HTTP success | Top-1 correct | True village in top 3 | No answer |
-|---:|---:|---:|---:|---:|---:|
-| 20 m | 150 | 150 | 100.00% | 100.00% | 0 |
-| 100 m | 150 | 150 | 98.67% | 100.00% | 0 |
-| 300 m | 150 | 150 | 83.33% | 98.00% | 0 |
-| 1,000 m | 150 | 150 | 12.67% | 54.67% | 0 |
+## 4. REMOVED OR CHANGED FROM BEFORE
 
-### Harder near-border API tests
+- PR #2 is **merged**, not open/draft. Merge commit: `3baf94cacbea18d0191c42fcd9774990ad50c901`. The old main-branch STATUS report incorrectly said PR #2 was open and is superseded by this report.
+- PR #3 starts low-accuracy browser geolocation, high-accuracy GPS watch, Vercel IP lookup and stored last-known fix independently; it adds hierarchy aggregation, a five-province prior, versioned picker cache, map correction and OSM landmark lookup.
+- On PR #3, commit `8f9cca0fd22b2fe6154b14ad699e527f0e021c1f` changes unexpected POST `/api/locate` failures: it now tries the official representative-point fallback for valid coordinates, then returns an explicitly uninformative service-area prior instead of HTTP 502. Commit `07c865e6a81ee5eca4fdb042b1de9b19a196550d` adds a source-contract test for this path. This test is static source inspection, not a live integration test.
+- No merge, Production deploy, rollback, Supabase mutation, environment-variable edit, or Supabase-integration edit was performed.
 
-**Deployment:** older Preview commit `1cd3f2ea8ece5a9edafba15a5e310a8119c00a0c`. Separate deterministic sample: 150 points about 10 m inside selected village polygons; 20/100/300 m accuracy. It is not the earlier 139-point SQL-only set.
+## 5. BLOCKED
 
-| Accuracy | Samples | HTTP success | Top-1 correct | True village in top 3 | No answer |
-|---:|---:|---:|---:|---:|---:|
-| 20 m | 150 | 150 | 100.00% | 100.00% | 0 |
-| 100 m | 150 | 150 | 100.00% | 100.00% | 0 |
-| 300 m | 150 | 150 | 95.33% | 100.00% | 0 |
+- **Vercel:** project listing identifies `iwacu-rwanda-2` under team `ahabona`, but project/environment detail calls return 404 and deployment listing returns 403. Direct Production URL fetch also reports that the deployment is not available to this connector. Therefore Production deployment ID, environment targets and database hostnames could not be verified. No secret values were requested or read.
+- **Preview build limit:** GitHub's Vercel bot recorded `api-deployments-free-per-day`; PR #3 Vercel check was pending/failing for this reason. Avoid triggering unnecessary Preview builds.
+- **Owner phone checks (tap-only):** still required for indoor network/Wi-Fi behavior, GPS permission denied/timeout, no internet, and offline after one online cache load.
 
-### T3 wording threshold
+## 6. UNVERIFIED / RISKS
 
-Geometric overlap scores are **not calibrated probabilities**; do not infer a confidence label from the raw score alone.
-
-| Accuracy radius | Interior top-1 | Near-border top-1 | ≥97% in both synthetic sets? | Wording |
-|---:|---:|---:|---|---|
-| 20 m | 100.00% | 100.00% | Yes, synthetic only | Still no “high confidence”; keep confirmation |
-| 100 m | 98.67% | 100.00% | Yes, synthetic only | Still cautious; keep confirmation |
-| 300 m | 83.33% | 95.33% | No | Uncertain; check/pick manually |
-| 1,000 m | 12.67% | Not tested | No | Estimate only; pick manually |
-
-### Current-code local API checks (commit `7b07bf1c74544e5483199f71ff3eea9c3d5f81c4`)
-
-Local Next.js dev server, no Supabase environment variables. This tests NISR fallback and the current bundled index, **not a new Preview deployment**. Tests were run by POSTing to `/api/locate`.
-
-| Case | Result |
-|---|---|
-| Six official coordinate samples (Gasabo, Huye, Musanze, Nyagatare, Nyarugenge, Rubavu) | 6/6 HTTP 200 success; expected village top-1 |
-| Kivu lake gap (-1.75, 29.20) | HTTP 200 success, `source=nearest`, Butotori; `NEAREST_VILLAGE_ESTIMATE` |
-| Outside east (-1.95, 31.00) | HTTP 200, `source=nearest`, Busasamana I; estimate |
-| Outside west (-1.95, 28.70) | HTTP 200, `source=nearest`, Rutagara; estimate |
-
-The static representative-point fallback is unit-tested and integrated into the API/offline path. A new Preview deployment of the updated fallback code is **UNVERIFIED** because Vercel rejected another deployment with HTTP 402 `api-deployments-free-per-day` (“try again in 24 hours”). The latest code build/tests passed GitHub Actions; the public Preview still runs the older `291599...` commit.
-
-## 4. BLOCKED
-
-- **Vercel:** new Preview deployment blocked by the daily deployment API limit. Need Vercel deployment quota to reset or the owner to resolve the plan/limit. No setting was changed.
-- **Production environment:** URL/keys are masked in Vercel integration results. The current project refs by Production/Preview/Development remain UNVERIFIED. Last recorded host was `agwfnpwootwsgsdeohcd.supabase.co`, but this may be stale; do not rely on it. Owner must visually confirm all three values belong to populated project `buexgewxypvkqmphvfec`, then redeploy Production.
-- **Phone-only checks:** owner taps required for GPS denied/timeout, no internet/no signal, and true Airplane mode after one online load.
-
-## 5. UNVERIFIED / RISKS
-
-- UI code renders `VillagePicker` in locate-error state; manual selection code falls back to the bundled verified index. This is code-inspected, not real-device verification.
-- Offline hierarchy/index is 1,937,955 bytes, with 14,823 village representative points and complete parent links except the deliberately omitted country root. Service Worker now uses cache version v3 and precaches `/offline/location-index.json`. The separate polygon file `/offline/rwanda-village-boundaries.geojson` is still absent; offline GPS therefore uses the explicit representative-point estimate when the cached index exists. Airplane-mode test remains UNVERIFIED.
-- **T5 still not fully proven:** GPS permission denied, GPS timeout, no internet, Supabase unavailable with a real configured browser, and “no signal at all” were not all tested end-to-end in a browser. A Kivu offshore sample previously returned HTTP 422 on old code; latest local code returned an estimate. Current fallback code still needs a fresh Preview deploy/API run.
-- Vercel `GET /api/health` on Preview was HTTP 200, `status=degraded`, because `ADMIN_WRITE_TOKEN` is missing; public Supabase env checks were present in that Preview.
-- Backup tables: `public._bak_boundaries_geom` (estimated 17,423 rows) and `public._bak_boundaries_meta` (estimated row count unavailable). Both have RLS enabled and no `anon`/`authenticated` SELECT grant. **Keep both** until release verification plus a separately verified export; only consider dropping after rollback window.
-- Supabase Advisor warns `auth_leaked_password_protection` is disabled. Admin screen has a password/passcode input, but its handler ignores the value and stores session-like data in localStorage instead of verifying with Supabase Auth. Treat admin authentication as HIGH RISK; the whole app auth flow has not been exhaustively audited.
-
-## 6. OWNER STEPS (NOT DONE)
-
-1. In Vercel, check that `NEXT_PUBLIC_SUPABASE_URL`, the public anon/publishable key, and server-only service-role key all belong to project `buexgewxypvkqmphvfec`. Do not send key values. Check duplicated/integration variables.
-2. After Preview verification, redeploy Production with those aligned values; no Production settings were changed by this work.
-3. On a phone, complete the six-point list and real GPS taps in 3–4 districts. Then open online once, enable Airplane mode, search/select a village and report what happens.
+- The currently implemented no-coordinate/no-IP/no-history fallback returns five equally weighted provinces (20 each). That is a non-empty service-area prior, **not a best estimate of the person's actual province, district, cell or village**. With literally no location signal or prior data, the person's actual location cannot be inferred without making up a name. The UI/API must label this limitation plainly.
+- IP fallback uses Vercel latitude/longitude when present and inside Rwanda; otherwise it falls back to the province prior. IP location is coarse and may be wrong, especially on mobile-carrier gateways.
+- Browser geolocation does not expose raw cell-tower IDs or Wi-Fi scan results to a normal website. `enableHighAccuracy: false` is a browser request, not a guarantee that a network/Wi-Fi fix will be returned.
+- Picker code now uses a province root, five-province label, parent-level filtering and cache version v3. Runtime listing of all five provinces, five full district-to-village paths, and offline-after-one-load have not been exercised on a phone or browser test.
+- Tests in this PR include static source/contract checks and unit tests for helper functions. They do not yet exercise every required actual path: network fixes at 100 m/500 m/2 km/5 km/20 km, IP-only, stale-only, permission denied, Supabase down, outside Rwanda, and no signal.
+- The PR's representative-point/distance scores and PostGIS area-overlap scores are not calibrated probabilities. Do not display them as real-world hit probabilities until calibration is measured on a separate, sufficiently large labelled test set.
+- Existing historical 600-point and 450-point test tables are from older commits and cannot be carried forward as PR #3 release evidence.
+- NISR boundary data has known missing villages and Lake Kivu gaps. The new OSM endpoint depends on community-contributed coverage and upstream availability; it may return no nearby features.
+- No real-phone test has been done. No claim of nationwide reliability is made.
 
 ## 7. NEXT 3 ACTIONS
 
-1. When Vercel permits it, deploy current branch head `7b07bf1c74544e5483199f71ff3eea9c3d5f81c4` to Preview; repeat 600-point, border, Kivu and outside-coordinate tests against that exact deployment.
-2. Run browser/device failure checks: GPS denied, GPS timeout, no internet, Supabase down, outside Rwanda and no signal; ensure picker remains usable and estimates are labelled.
-3. Owner verifies Vercel Production/Preview/Development env targets and completes Production + Airplane-mode tap checklist. No merge or Production deployment by this work.
+1. Finish and verify Actions for the exact PR #3 head, then add route-level tests that fail CI for every required no-empty-result scenario and run hierarchical hit-rate/calibration tests on a larger border/Kivu/gap dataset.
+2. Test the picker runtime for all five provinces, at least five districts, and offline after one online load; confirm the result UI selects the finest supported level without presenting raw scores as calibrated probabilities.
+3. After Vercel connector access and build quota are resolved, test the exact candidate Preview via `/api/locate`, inspect matching Supabase API logs, and provide the owner the tap-only indoor test. Keep PR #3 unmerged and Production unchanged until every T1 gate passes.
