@@ -1,5 +1,6 @@
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LocateSuccess } from "@/types/location";
+import { aggregateLocationHierarchy } from "@/lib/location-hierarchy";
 
 type AdministrativeLevel = "province" | "district" | "sector" | "cell" | "village";
 
@@ -133,30 +134,34 @@ export function nearestVillageEstimateFromIndex(
   }));
 
   const byCode = new Map(choices.map((choice) => [choice.scope_code, choice]));
+  const aggregates = aggregateLocationHierarchy(matches);
+  const hierarchyCandidates: NonNullable<LocateSuccess["hierarchyCandidates"]> = {};
   const hierarchy: LocateSuccess["hierarchy"] = {};
-  let current: RepresentativeChoice | undefined = byCode.get(matches[0].scope_code);
 
-  for (let depth = 0; current && depth < 5; depth += 1) {
-    const match: ConfidenceMatch = {
-      scope_code: current.scope_code,
-      name_kiny: current.name_kiny,
-      name_eng: current.name_eng,
-      level: current.level,
-      confidence: matches[0].confidence,
-      intersection_area_m2: 0,
-    };
-    if (current.level === "village") hierarchy.village = match;
-    if (current.level === "cell") hierarchy.cell = match;
-    if (current.level === "sector") hierarchy.sector = match;
-    if (current.level === "district") hierarchy.district = match;
-    if (current.level === "province") hierarchy.province = match;
-    current = current.parent_scope_code ? byCode.get(current.parent_scope_code) : undefined;
+  for (const level of ["province", "district", "sector", "cell", "village"] as const) {
+    const resolved = (aggregates[level] ?? []).slice(0, 3).flatMap((item) => {
+      const choice = byCode.get(item.scope_code);
+      if (!choice) return [];
+      return [{
+        scope_code: choice.scope_code,
+        name_kiny: choice.name_kiny,
+        name_eng: choice.name_eng,
+        level,
+        confidence: item.confidence,
+        intersection_area_m2: item.intersection_area_m2,
+      } satisfies ConfidenceMatch];
+    });
+    if (resolved.length > 0) {
+      hierarchyCandidates[level] = resolved;
+      hierarchy[level] = resolved[0];
+    }
   }
 
   return {
     status: "success",
     matches,
     hierarchy,
+    hierarchyCandidates,
     leaders: [],
     source: "nearest",
     warning,
