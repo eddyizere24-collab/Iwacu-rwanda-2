@@ -11,7 +11,7 @@ This is a task-completion index, **not a location-accuracy score**. Equal weight
 | ID | status | evidence |
 |---|---|---|
 | T0 | DONE-UNVERIFIED | GitHub confirms main, PR #2 merged at `3baf94cacbea18d0191c42fcd9774990ad50c901`, PR #3 open. Supabase project and boundary counts verified by connector/SQL. Vercel project is visible in team project listing, but deployment/environment API reads fail with 403/404; production URL, env hostnames and live phone bugs were not independently verified. |
-| T1 | IN PROGRESS | PR #3 head `07c865e6a81ee5eca4fdb042b1de9b19a196550d`. CI run #182 is in progress; location unit-test step passed, TypeScript check was still running, production build pending at last check. No gate-complete API/device/calibration evidence. |
+| T1 | IN PROGRESS | Latest PR #3 head is `5f053e09cfd3314a426b0240f0918f7ee86091b4` (status-document-only commit after code head `07c865e6a81ee5eca4fdb042b1de9b19a196550d`). GitHub Actions run #182 on code head `07c865e...` completed successfully: location unit tests, TypeScript check and Production build all passed. The Vercel check remains failed due the daily deployment/build limit. No gate-complete API/device/calibration evidence. |
 | T2 | NOT STARTED | No H3/geohash/national grid index built, compressed, measured or compared with PostGIS. |
 | T3 | IN PROGRESS | PR #3 has a map-pin correction component and NISR boundary fallback code, but the complete offline/light vector map with roads/landmarks has not been proven or released. |
 | T4 | IN PROGRESS | PR #3 adds a nearby-landmarks route/component backed by OpenStreetMap/Overpass. Live coverage, stability, and indoor usefulness have not been verified. |
@@ -23,12 +23,12 @@ This is a task-completion index, **not a location-accuracy score**. Equal weight
 
 | Date | SHA / run | Test | Route |
 |---|---|---|---|
-| 2026-10-30 | `07c865e6a81ee5eca4fdb042b1de9b19a196550d`, Actions run #182 (`41021218009`) | Location ranking/unit-test step passed; TypeScript check was in progress; Production build pending at last observation. | Unit tests only; not `/api/locate` |
+| 2026-10-30 | `07c865e6a81ee5eca4fdb042b1de9b19a196550d`, Actions run #182 (`41021218009`) | Location ranking/unit-test step, TypeScript check and Production build all completed successfully. | Unit tests only; not `/api/locate` |
 | 2026-10-30 | Supabase project `buexgewxypvkqmphvfec` | SQL inventory: 17,423 boundaries; 14,823 villages; 2,148 cells; 416 sectors; 30 districts; 5 provinces; 0 leaders. PostGIS 3.3.7 and RPC signature checked. | SQL only; not a location accuracy test |
 | Historical | `29159954d590912919338f999bd61d20389105a5` | Previous 600-point synthetic POST suite recorded in the old report. It is not PR #3 head and is not evidence for the current candidate. | Historical Preview `/api/locate` |
 | Historical | `1cd3f2ea8ece5a9edafba15a5e310a8119c00a0c` | Previous 450-point near-border suite recorded in the old report. It is not PR #3 head and is not evidence for the current candidate. | Historical Preview `/api/locate` |
 
-No new `/api/locate` HTTP POST run was executed against PR #3 head. Calibration is not available: polygon-overlap and representative-point weights are scores, not verified probabilities. No calibration table or village/cell/sector/district hit-rate table at 100 m–20 km exists for the PR #3 head.
+No new `/api/locate` HTTP POST run was executed against PR #3 code head. The latest PR head `5f053e...` only adds this status document to the already-tested code head. Calibration is not available: polygon-overlap and representative-point weights are scores, not verified probabilities. No calibration table or village/cell/sector/district hit-rate table at 100 m–20 km exists for the PR #3 head.
 
 ## 4. REMOVED OR CHANGED FROM BEFORE
 
