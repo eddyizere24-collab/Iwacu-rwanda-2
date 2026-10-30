@@ -76,12 +76,41 @@ export function MapPinPicker({
 
     loadLeaflet().then((L) => {
       if (cancelled || !containerRef.current || mapRef.current) return;
+      let lastKnown: { latitude: number; longitude: number } | null = null;
+      try {
+        const raw = localStorage.getItem("iwacu-last-location-fix");
+        if (raw) {
+          const saved = JSON.parse(raw) as {
+            latitude?: number;
+            longitude?: number;
+            recordedAt?: number;
+          };
+          const age = Number.isFinite(saved.recordedAt) ? Date.now() - (saved.recordedAt as number) : Infinity;
+          if (
+            Number.isFinite(saved.latitude) &&
+            Number.isFinite(saved.longitude) &&
+            age >= 0 &&
+            age <= 24 * 60 * 60 * 1000
+          ) {
+            lastKnown = {
+              latitude: saved.latitude as number,
+              longitude: saved.longitude as number,
+            };
+          }
+        }
+      } catch {
+        // The map can still open at the Rwanda overview without browser storage.
+      }
+
+      const initialCenter = lastKnown
+        ? [lastKnown.latitude, lastKnown.longitude] as [number, number]
+        : [-1.94, 29.87] as [number, number];
       const map = L.map(containerRef.current, {
         zoomControl: true,
         scrollWheelZoom: false,
         minZoom: 7,
         maxZoom: 18,
-      }).setView([-1.94, 29.87], 8);
+      }).setView(initialCenter, lastKnown ? 14 : 8);
       mapRef.current = map;
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -102,6 +131,7 @@ export function MapPinPicker({
         }
       };
 
+      if (lastKnown) updateMarker(lastKnown.latitude, lastKnown.longitude);
       map.on("click", (event: any) => updateMarker(event.latlng.lat, event.latlng.lng));
 
       const refreshOverlay = async () => {
