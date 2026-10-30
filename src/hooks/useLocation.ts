@@ -265,7 +265,7 @@ export function useLocation() {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       await Promise.race([
         firstAnswer,
-        new Promise<void>((resolve) => setTimeout(resolve, 8_000)),
+        new Promise<void>((resolve) => setTimeout(resolve, 4_000)),
       ]);
       if (!firstAnswerResolved && !controller.signal.aborted) {
         showRwandaPrior("Nta coordinates telefone yashoboye gutanga. Izi ntara ni prior ingana gusa, si aho uri hapimwe.");
@@ -319,7 +319,7 @@ export function useLocation() {
 
     await Promise.race([
       firstAnswer,
-      new Promise<void>((resolve) => setTimeout(resolve, 12_000)),
+      new Promise<void>((resolve) => setTimeout(resolve, 4_000)),
     ]);
 
     if (!firstAnswerResolved && !controller.signal.aborted) {
