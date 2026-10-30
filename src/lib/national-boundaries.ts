@@ -15,7 +15,6 @@ import { createLocateError } from "@/lib/utils/errors";
 const NISR_QUERY_URL =
   "https://gis-server.statistics.gov.rw/server/rest/services/Hosted/Village_Boundary_2022/FeatureServer/3/query";
 const NISR_SOURCE = "NISR Village Boundary 2022";
-const MIN_CONFIDENCE = 5;
 
 type BoundaryGeometry = Polygon | MultiPolygon;
 type BoundaryFeature = Feature<BoundaryGeometry, Record<string, unknown>>;
@@ -65,6 +64,176 @@ function scopeCodes(props: Record<string, unknown>) {
   return { province, district, sector, cell, village };
 }
 
+export type OfficialNationalIndexChoice = {
+  scope_code: string;
+  name_kiny: string;
+  name_eng: string | null;
+  level: "province" | "district" | "sector" | "cell" | "village";
+  parent_scope_code: string | null;
+};
+
+/**
+ * Fallback index sourced only from NISR's published 2022 village layer.
+ * It contains no made-up names or geometry. NISR documents that its data
+ * covers 14,816 of 14,837 gazetted villages, so this is a resilience fallback,
+ * not a replacement for the more complete populated Supabase index.
+ */
+export async function listOfficialNationalLocationIndex(): Promise<OfficialNationalIndexChoice[]> {
+  const pageSize = 2000;
+  const offsets = Array.from({ length: 8 }, (_, index) => index * pageSize);
+  const pages = await Promise.all(offsets.map(async (offset) => {
+    const params = new URLSearchParams({
+      where: "1=1",
+      outFields: "province_id,province,district_id,district,sector_id,sector,cell_id,cell,village_id,village",
+      returnGeometry: "false",
+      resultRecordCount: String(pageSize),
+      resultOffset: String(offset),
+      orderByFields: "village_id",
+      f: "json",
+    });
+
+    const response = await fetch(NISR_QUERY_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+      body: params.toString(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) {
+      throw new Error(`NISR location index page ${offset} returned HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as {
+      features?: Array<{ attributes?: Record<string, unknown>; properties?: Record<string, unknown> }>;
+      error?: { message?: string };
+    };
+    if (!Array.isArray(payload.features)) {
+      throw new Error(payload.error?.message ?? `NISR location index page ${offset} had no features`);
+    }
+    return payload.features;
+  }));
+  const features = pages.flat();
+
+  const index = new Map<string, OfficialNationalIndexChoice>();
+  const add = (
+    scopeCode: string,
+    level: OfficialNationalIndexChoice["level"],
+    parentScopeCode: string | null,
+    nameKiny: string,
+    nameEng: string | null
+  ) => {
+    if (!scopeCode || !nameKiny || index.has(scopeCode)) return;
+    index.set(scopeCode, {
+      scope_code: scopeCode,
+      level,
+      parent_scope_code: parentScopeCode,
+      name_kiny: nameKiny,
+      name_eng: nameEng,
+    });
+  };
+
+  const provinceNamesKiny: Record<string, string> = {
+    "city of kigali": "Umujyi wa Kigali",
+    "kigali city": "Umujyi wa Kigali",
+    "kigali": "Umujyi wa Kigali",
+    "southern province": "Intara y'Amajyepfo",
+    "western province": "Intara y'Iburengerazuba",
+    "northern province": "Intara y'Amajyaruguru",
+    "eastern province": "Intara y'Iburasirazuba",
+  };
+
+  for (const feature of features) {
+    const props = feature.attributes ?? feature.properties;
+    if (!props) continue;
+    const codes = scopeCodes(props);
+    if (!codes) continue;
+
+    const provinceNameEng = field(props, "province");
+    const provinceNameKey = provinceNameEng.toLowerCase().replace(/\s+/g, " ").trim();
+    const provinceNameKiny = provinceNamesKiny[provinceNameKey] ?? provinceNameEng;
+    const districtName = field(props, "district");
+    const sectorName = field(props, "sector");
+    const cellName = field(props, "cell");
+    const villageName = field(props, "village");
+
+    add(codes.province, "province", null, provinceNameKiny, provinceNameEng || null);
+    add(codes.district, "district", codes.province, districtName, districtName || null);
+    add(codes.sector, "sector", codes.district, sectorName, sectorName || null);
+    add(codes.cell, "cell", codes.sector, cellName, cellName || null);
+    add(codes.village, "village", codes.cell, villageName, villageName || null);
+  }
+
+  const levelOrder: Record<OfficialNationalIndexChoice["level"], number> = {
+    province: 0,
+    district: 1,
+    sector: 2,
+    cell: 3,
+    village: 4,
+  };
+  return Array.from(index.values()).sort((a, b) =>
+    levelOrder[a.level] - levelOrder[b.level] ||
+    a.name_kiny.localeCompare(b.name_kiny, "rw")
+  );
+}
+
+export async function getOfficialVillagePolygonsForBbox(
+  west: number,
+  south: number,
+  east: number,
+  north: number
+): Promise<{ type: "FeatureCollection"; features: Array<Record<string, unknown>> }> {
+  if (
+    ![west, south, east, north].every(Number.isFinite) ||
+    west < 28.7 || east > 31.1 || south < -3.0 || north > -0.8 ||
+    west >= east || south >= north || (east - west) > 1.0 || (north - south) > 1.0
+  ) {
+    throw new Error("Map view bounds are outside the allowed Rwanda map window.");
+  }
+
+  const params = new URLSearchParams({
+    where: "1=1",
+    geometry: JSON.stringify({
+      xmin: west,
+      ymin: south,
+      xmax: east,
+      ymax: north,
+      spatialReference: { wkid: 4326 },
+    }),
+    geometryType: "esriGeometryEnvelope",
+    spatialRel: "esriSpatialRelIntersects",
+    inSR: "4326",
+    outSR: "4326",
+    outFields: "province,district,sector,cell,village",
+    returnGeometry: "true",
+    resultRecordCount: "500",
+    f: "geojson",
+  });
+
+  const response = await fetch(NISR_QUERY_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+    body: params.toString(),
+    cache: "no-store",
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) {
+    throw new Error(`Official map boundary lookup returned HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    type?: string;
+    features?: Array<Record<string, unknown>>;
+    error?: { message?: string };
+  };
+  if (!Array.isArray(payload.features)) {
+    throw new Error(payload.error?.message ?? "Official boundary response had no features.");
+  }
+  return {
+    type: "FeatureCollection",
+    features: payload.features.slice(0, 500),
+  };
+}
+
 function calculateIntersection(
   boundary: BoundaryFeature,
   accuracyCircle: Feature<Polygon>
@@ -107,7 +276,10 @@ export async function locateFromOfficialNationalBoundaries(
   longitude: number,
   accuracyMeters: number
 ): Promise<LocateResponse> {
-  const circle = turf.circle([longitude, latitude], accuracyMeters / 1000, {
+  const safeAccuracyMeters = Number.isFinite(accuracyMeters)
+    ? Math.min(Math.max(accuracyMeters, 1), 50_000)
+    : 100;
+  const circle = turf.circle([longitude, latitude], safeAccuracyMeters / 1000, {
     steps: 48,
     units: "kilometers",
   });
@@ -179,7 +351,7 @@ export async function locateFromOfficialNationalBoundaries(
 
   const circleArea = turf.area(circle);
   if (!(circleArea > 0)) {
-    return createLocateError("GPS_ACCURACY_TOO_LOW", { accuracy: accuracyMeters });
+    return createLocateError("POINT_IN_GAP", { reason: "accuracy_geometry_unavailable" });
   }
 
   const rawMatches: Array<{
@@ -211,25 +383,125 @@ export async function locateFromOfficialNationalBoundaries(
     });
   }
 
+  let nearestFallbackUsed = false;
+
+  if (rawMatches.length === 0) {
+    // The official layer has gaps (including some Lake Kivu coverage). Search
+    // a wider 50 km area and return the closest real NISR villages as estimates.
+    // This never fabricates a place name and does not call the scores probabilities.
+    const fallbackCircle = turf.circle([longitude, latitude], 50, {
+      steps: 32,
+      units: "kilometers",
+    });
+    const fallbackParams = new URLSearchParams(params);
+    fallbackParams.set(
+      "geometry",
+      JSON.stringify({
+        rings: [fallbackCircle.geometry.coordinates[0]],
+        spatialReference: { wkid: 4326 },
+      })
+    );
+
+    try {
+      const fallbackResponse = await fetch(NISR_QUERY_URL, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
+        body: fallbackParams.toString(),
+        cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (fallbackResponse.ok) {
+        const payload = (await fallbackResponse.json()) as BoundaryCollection | {
+          error?: { message?: string; details?: string[] };
+        };
+        if ("features" in payload && Array.isArray(payload.features)) {
+          const point = turf.point([longitude, latitude]);
+          const nearby: Array<{
+            feature: BoundaryFeature;
+            props: Record<string, unknown>;
+            codes: NonNullable<ReturnType<typeof scopeCodes>>;
+            name: string;
+            distanceMeters: number;
+          }> = [];
+
+          for (const feature of payload.features) {
+            if (!feature?.geometry || !feature.properties) continue;
+            const props = feature.properties;
+            const codes = scopeCodes(props);
+            const name = field(props, "village");
+            if (!codes || !name) continue;
+
+            let distanceMeters = Number.POSITIVE_INFINITY;
+            try {
+              // Measure to the actual village polygon boundary instead of its
+              // centroid so shoreline villages are not ranked by a center in the lake.
+              const polygons: number[][][][] =
+                feature.geometry.type === "Polygon"
+                  ? [feature.geometry.coordinates as number[][][]]
+                  : feature.geometry.coordinates as number[][][][];
+              for (const polygon of polygons) {
+                for (const ring of polygon) {
+                  for (let index = 0; index < ring.length - 1; index += 1) {
+                    const first = ring[index];
+                    const second = ring[index + 1];
+                    if (!first || !second) continue;
+                    const segment = turf.lineString([
+                      [first[0], first[1]],
+                      [second[0], second[1]],
+                    ]);
+                    const distance = turf.pointToLineDistance(point, segment, { units: "meters" });
+                    if (Number.isFinite(distance) && distance < distanceMeters) {
+                      distanceMeters = distance;
+                    }
+                  }
+                }
+              }
+            } catch {
+              continue;
+            }
+            if (Number.isFinite(distanceMeters) && distanceMeters <= 50_000) {
+              nearby.push({ feature, props, codes, name, distanceMeters });
+            }
+          }
+
+          nearby.sort((a, b) => a.distanceMeters - b.distanceMeters);
+          const selected = nearby.slice(0, 3);
+          const weights = selected.map((item) =>
+            Math.exp(-item.distanceMeters / Math.max(250, safeAccuracyMeters))
+          );
+          const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+
+          selected.forEach((item, index) => {
+            rawMatches.push({
+              feature: item.feature,
+              props: item.props,
+              codes: item.codes,
+              name: item.name,
+              area: 0,
+              confidence: totalWeight > 0 ? (weights[index] / totalWeight) * 100 : 0,
+            });
+          });
+          nearestFallbackUsed = rawMatches.length > 0;
+        }
+      }
+    } catch (error) {
+      console.error("[national-boundaries] nearest-village fallback failed:", error);
+    }
+  }
+
   if (rawMatches.length === 0) {
     return createLocateError("POINT_IN_GAP", {
       source: NISR_SOURCE,
       message:
-        "No official village polygon intersects the reported GPS accuracy area. The source dataset does not cover every gazetted village and excludes some Lake Kivu area.",
+        "Nta mudugudu uri muri aka gace wabonetse mu makuru yemewe. Ushobora gushakisha cyangwa guhitamo umudugudu ku rutonde.",
     });
   }
 
   rawMatches.sort((a, b) => b.confidence - a.confidence);
   const top = rawMatches[0];
 
-  if (top.confidence < MIN_CONFIDENCE) {
-    return createLocateError("CONFIDENCE_TOO_LOW", {
-      max_confidence: Math.round(top.confidence * 100) / 100,
-      source: NISR_SOURCE,
-    });
-  }
-
-  const matches: ConfidenceMatch[] = rawMatches.map((item) =>
+  const matches: ConfidenceMatch[] = rawMatches.slice(0, 3).map((item) =>
     asMatch(
       item.codes.village,
       "village",
@@ -300,10 +572,12 @@ export async function locateFromOfficialNationalBoundaries(
     hierarchy,
     // Official boundary data does not contain verified current leader contacts.
     leaders: [],
-    source: "gps",
+    source: nearestFallbackUsed ? "nearest" : "gps",
   };
 
-  if (matches.length > 1 && matches[1].confidence > 5) {
+  if (nearestFallbackUsed) {
+    result.warning = "NEAREST_VILLAGE_ESTIMATE";
+  } else if (matches.length > 1 && matches[1].confidence > 5) {
     result.warning =
       "GPS_ACCURACY_AREA_CROSSES_VILLAGE_BOUNDARIES";
   }

@@ -7,6 +7,8 @@ import { LeaderCard } from "@/components/LeaderCard";
 import { ErrorDisplay } from "@/components/ErrorDisplay";
 import { RwandanSun } from "@/components/RwandanSun";
 import { AiSearchAssistant } from "@/components/AiSearchAssistant";
+import { VillagePicker } from "@/components/VillagePicker";
+import { MapPinPicker } from "@/components/MapPinPicker";
 import {
   MapPin,
   RotateCcw,
@@ -25,10 +27,15 @@ export default function HomePage() {
     errorMessageEng,
     locate,
     reset,
+    chooseVillage,
+    locateAtCoordinate,
+    submitLocationFeedback,
   } = useLocation();
 
   // Pre-permission consent dialog state (D1 section D)
   const [showConsentModal, setShowConsentModal] = useState(false);
+  const [feedbackConsent, setFeedbackConsent] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
 
   // Trigger locate with D1 pre-permission consent explanation
   function handleLocateClick() {
@@ -44,29 +51,54 @@ export default function HomePage() {
     locate();
   }
 
-  // Calculate confidence wording per D1 F3
-  function getConfidenceWording(confidence: number): { text: string; colorClass: string } {
-    if (confidence >= 80) {
+  // Raw geometric overlap scores have not been calibrated to hit rates.
+  // Never label a GPS/map match "high confidence" from the score alone.
+  function getConfidenceWording(source: string | undefined): { text: string; colorClass: string } {
+    if (source === "manual") {
       return {
-        text: "Twabyizeye cyane",
-        colorClass: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300",
+        text: "Wahisemo uyu mudugudu — ushobora kuwuhindura",
+        colorClass: "text-blue-700 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300",
       };
     }
-    if (confidence >= 50) {
+    if (source === "nearest") {
       return {
-        text: "Birashoboka",
+        text: "Iri ni igereranya gusa — genzura cyangwa uhitemo undi mudugudu",
+        colorClass: "text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300",
+      };
+    }
+    if (source === "offline") {
+      return {
+        text: "Ibyabonetse offline — genzura izina ry'umudugudu",
         colorClass: "text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300",
       };
     }
     return {
-      text: "Ntituzi neza",
-      colorClass: "text-muted-foreground bg-muted",
+      text: "Icyifuzo cya GPS/ikarita — genzura umudugudu mbere yo kuwemeza",
+      colorClass: "text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300",
     };
   }
 
-  const confidenceInfo = data?.matches[0]?.confidence
-    ? getConfidenceWording(data.matches[0].confidence)
-    : { text: "Twabyizeye cyane", colorClass: "text-emerald-700 bg-emerald-50" };
+  const topScore = data?.matches[0]?.confidence ?? 0;
+  const lowConfidence = Boolean(data && (
+    data.source === "nearest" ||
+    ((data.source === "gps" || data.source === "map" || data.source === "offline") && topScore < 50)
+  ));
+  const confidenceInfo = data
+    ? getConfidenceWording(data.source)
+    : { text: "Ahantu ntiharamenyekana neza", colorClass: "text-muted-foreground bg-muted" };
+
+  async function handleFeedbackSubmit() {
+    const scopeCode = data?.hierarchy?.village?.scope_code ?? data?.matches[0]?.scope_code;
+    if (!scopeCode || !feedbackConsent) return;
+    setFeedbackStatus("sending");
+    try {
+      await submitLocationFeedback(scopeCode);
+      setFeedbackStatus("sent");
+      setFeedbackConsent(false);
+    } catch {
+      setFeedbackStatus("error");
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-10">
@@ -99,6 +131,12 @@ export default function HomePage() {
           {/* D1 B3 & B4 Big Hero Location Button */}
           <div className="mt-8 flex flex-col items-center justify-center">
             <LocationButton status={status} onClick={handleLocateClick} />
+          </div>
+          <div className="mx-auto mt-6 max-w-2xl space-y-4">
+            <VillagePicker onSelect={chooseVillage} />
+            <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
+              void locateAtCoordinate(latitude, longitude, accuracy);
+            }} />
           </div>
 
           {/* NCSA Law compliance note */}
@@ -150,6 +188,12 @@ export default function HomePage() {
         </section>
       )}
 
+      {(status === "requesting_gps" || status === "locating") && (
+        <div className="mx-auto mt-6 max-w-2xl">
+          <VillagePicker onSelect={chooseVillage} />
+        </div>
+      )}
+
       {/* 3. ERROR DISPLAY (D1 section H) */}
       {status === "error" && (
         <div className="my-6">
@@ -159,6 +203,9 @@ export default function HomePage() {
             messageEng={errorMessageEng}
             onRetry={locate}
           />
+          <div className="mx-auto mt-6 max-w-2xl">
+            <VillagePicker onSelect={chooseVillage} />
+          </div>
 
           <div className="mt-4 text-center">
             <button
@@ -188,6 +235,15 @@ export default function HomePage() {
             </button>
           </div>
 
+          {!lowConfidence && (
+            <div className="mx-auto max-w-2xl space-y-4">
+              <VillagePicker onSelect={chooseVillage} />
+              <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
+                void locateAtCoordinate(latitude, longitude, accuracy);
+              }} />
+            </div>
+          )}
+
           {/* D1 F1 & F2 Hierarchy Place Card */}
           <div className="overflow-hidden rounded-3xl border border-border bg-card p-6 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/80 pb-4 mb-4">
@@ -211,81 +267,155 @@ export default function HomePage() {
               >
                 <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
                 <span>
-                  {confidenceInfo.text} ({data.matches[0]?.confidence ?? 100}%)
+                  {data.source === "manual"
+                    ? "Wemejwe nawe"
+                    : data.source === "nearest"
+                      ? "Igereranya ry'umudugudu uri hafi"
+                      : confidenceInfo.text}
                 </span>
               </span>
             </div>
 
-            {/* Administrative hierarchy uses the matched official boundary data. */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-              <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Intara / Umujyi
-                </span>
-                <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.province?.name_kiny || "Ntibyemejwe"}
-                </span>
-              </div>
+            {data.source === "manual" && (
+              <p className="mb-4 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300">
+                Wahisemo kandi wemeje uyu mudugudu. Ibi ntibivuga ko GPS yawemeje.
+              </p>
+            )}
+            {data.source === "nearest" && (
+              <p className="mb-4 rounded-xl bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+                Uyu ni umudugudu wegereye aho GPS yerekanye. Ibi ni amanota yo kugereranya, si amahirwe apimwe; genzura cyangwa uhitemo undi.
+              </p>
+            )}
+            {(data.source === "gps" || data.source === "map" || data.source === "offline") && (
+              <p className="mb-4 text-[11px] text-muted-foreground">
+                Iki ni igipimo cy'ihurirana ry'uruziga rwa GPS cyangwa ikimenyetso cyo ku ikarita n'imbibi; si amahirwe apimwe yo kuba umudugudu ari wo.
+              </p>
+            )}
 
-              <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Akarere
-                </span>
-                <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.district?.name_kiny || "Ntibyemejwe"}
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Umurenge
-                </span>
-                <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.sector?.name_kiny || "Ntibyemejwe"}
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Akagari
-                </span>
-                <span className="text-xs font-bold text-foreground mt-0.5 block truncate">
-                  {data.hierarchy?.cell?.name_kiny || "Ntibyemejwe"}
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-blue-600/30 bg-blue-50/50 dark:bg-blue-950/20 p-3">
-                <span className="text-[10px] uppercase font-bold text-blue-700 dark:text-blue-400 tracking-wider block">
-                  Umudugudu
-                </span>
-                <span className="text-xs font-bold text-blue-700 dark:text-blue-300 mt-0.5 block truncate">
-                  {data.hierarchy?.village?.name_kiny || data.matches[0]?.name_kiny || "Ntibyemejwe"}
-                </span>
-              </div>
-            </div>
-
-            {/* D1 F4 Overlap candidate villages if point lies on a border */}
-            {data.matches.length > 1 && (
-              <div className="mt-4 border-t border-border pt-3">
-                <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                  <Layers className="h-3.5 w-3.5 text-blue-600" />
-                  Dusanze imidugudu myinshi hafi yawe. Hitamo uwo uherereyemo:
+            {/* Low-score route: show reliable hierarchy first, then let the citizen pick. */}
+            {lowConfidence ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Umurenge</span>
+                    <span className="mt-1 block truncate text-sm font-bold">{data.hierarchy?.sector?.name_kiny || "Ntibyemejwe neza"}</span>
+                  </div>
+                  <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Akagari</span>
+                    <span className="mt-1 block truncate text-sm font-bold">{data.hierarchy?.cell?.name_kiny || "Ntibyemejwe neza"}</span>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Umudugudu nturamenyekana neza. Hitamo uwo uzi ku rutonde cyangwa ukoreshe ikarita iri hasi.
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {data.matches.map((m) => (
-                    <div
-                      key={m.scope_code}
-                      className="flex items-center justify-between text-xs rounded-lg border border-border bg-background p-2.5"
+                <div className="space-y-4">
+                  <VillagePicker onSelect={chooseVillage} />
+                  <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
+                    void locateAtCoordinate(latitude, longitude, accuracy);
+                  }} />
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Intara / Umujyi</span>
+                    <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.province?.name_kiny || "Ntibyemejwe"}</span>
+                  </div>
+                  <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Akarere</span>
+                    <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.district?.name_kiny || "Ntibyemejwe"}</span>
+                  </div>
+                  <div className="col-span-2 rounded-xl border border-dashed border-border bg-muted/20 p-3">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Umudugudu</span>
+                    <span className="mt-1 block text-sm font-bold">Ugomba kuwemeza cyangwa kuwuhitamo</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+                <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Intara / Umujyi</span>
+                  <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.province?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
+                <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Akarere</span>
+                  <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.district?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
+                <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Umurenge</span>
+                  <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.sector?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
+                <div className="rounded-xl border border-border/80 bg-muted/40 p-3">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Akagari</span>
+                  <span className="mt-1 block truncate text-xs font-bold">{data.hierarchy?.cell?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
+                <div className="rounded-xl border border-blue-600/30 bg-blue-50/50 p-3 dark:bg-blue-950/20">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">Umudugudu</span>
+                  <span className="mt-1 block truncate text-xs font-bold text-blue-700 dark:text-blue-300">{data.hierarchy?.village?.name_kiny || data.matches[0]?.name_kiny || "Ntibyemejwe"}</span>
+                </div>
+              </div>
+            )}
+
+            {/* D1 F4: candidates can be explicitly confirmed without exposing raw scores. */}
+            {data.matches.length > 1 && data.source !== "manual" && (
+              <div className="mt-4 border-t border-border pt-3">
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                  <Layers className="h-3.5 w-3.5 text-blue-600" />
+                  Imidugudu ishoboka. Kanda uwo uzi ko ari wo:
+                </p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {data.matches.map((match) => (
+                    <button
+                      key={match.scope_code}
+                      type="button"
+                      onClick={() => chooseVillage(
+                        match.scope_code,
+                        data.source === "map" ? "map" :
+                          data.source === "offline" ? "offline" :
+                          data.source === "nearest" ? "nearest" : "gps"
+                      )}
+                      className="flex min-h-[48px] items-center justify-between gap-3 rounded-lg border border-border bg-background p-3 text-left text-sm hover:border-[#20603D] hover:bg-[#20603D]/5"
                     >
-                      <span className="font-semibold text-foreground">
-                        {m.name_kiny}
+                      <span className="font-semibold">{match.name_kiny}</span>
+                      <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">
+                        {data.source === "nearest" ? "Igereranya — genzura" : match.confidence >= 80 ? "Ihurirana cyane n'imbibi" : match.confidence >= 50 ? "Irasaba kugenzurwa" : "Ntibisobanutse neza"}
                       </span>
-                      <span className="text-blue-600 font-bold">{m.confidence}%</span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
             )}
+
+            <div className="mt-5 rounded-2xl border border-border bg-muted/20 p-4">
+              <p className="text-sm font-bold">Fasha kunoza igenzura ry'ahantu (ubishatse gusa)</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Niba wemera, tubika gusa umudugudu wemeje, uburyo wakoresheje, ikosa rya GPS niba ryarabonetse, n'aho hafi y'aho telefone yari iri (hafi ya kilometero imwe). Ntidubika izina ryawe, telefone, konti cyangwa IP. Ushobora kutabyemera; nta cyo bizahindura ku ikoreshwa ry'urubuga.
+              </p>
+              <label className="mt-3 flex cursor-pointer items-start gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={feedbackConsent}
+                  onChange={(event) => {
+                    setFeedbackConsent(event.target.checked);
+                    if (!event.target.checked) setFeedbackStatus("idle");
+                  }}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-[#20603D]"
+                />
+                <span>Nemeza ko umudugudu ugaragaye ari wo cyangwa uwo nahisemo, kandi nemeye gutanga aya makuru atarimo umwirondoro.</span>
+              </label>
+              <button
+                type="button"
+                disabled={!feedbackConsent || feedbackStatus === "sending"}
+                onClick={() => void handleFeedbackSubmit()}
+                className="mt-3 min-h-[42px] w-full rounded-xl bg-[#20603D] px-4 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {feedbackStatus === "sending" ? "Turimo kohereza..." : "Emeza kandi wohereze"}
+              </button>
+              {feedbackStatus === "sent" && (
+                <p role="status" className="mt-2 text-xs text-emerald-700">Urakoze. Igitekerezo cyawe cyakiriwe.</p>
+              )}
+              {feedbackStatus === "error" && (
+                <p role="status" className="mt-2 text-xs text-amber-700">Ntibyashobotse kubika igitekerezo. Ushobora gukomeza gukoresha urubuga.</p>
+              )}
+            </div>
           </div>
 
           {/* D1 F5 Leader Cards */}

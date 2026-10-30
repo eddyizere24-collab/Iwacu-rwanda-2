@@ -6,6 +6,7 @@ import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
 import { calculateConfidenceOffline } from "@/lib/turf-logic";
 import type { OfflineBoundaryCollection } from "@/lib/turf-logic";
+import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
 
 export type LocationStatus =
   | "idle"
@@ -14,6 +15,8 @@ export type LocationStatus =
   | "success"
   | "error"
   | "offline";
+
+type FeedbackMethod = "gps" | "map" | "manual" | "nearest" | "offline";
 
 export interface UseLocationState {
   status: LocationStatus;
@@ -33,12 +36,13 @@ const INITIAL: UseLocationState = {
   isOffline: false,
 };
 
-const MAX_ACCURACY_M = 150;
 const GPS_TIMEOUT_MS = 15_000;
 
 export function useLocation() {
   const [state, setState] = useState<UseLocationState>(INITIAL);
   const abortRef = useRef<AbortController | null>(null);
+  const lastFixRef = useRef<{ latitude: number; longitude: number; accuracy: number; method: FeedbackMethod; recordedAt: number } | null>(null);
+  const feedbackMethodRef = useRef<FeedbackMethod>("manual");
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -76,23 +80,13 @@ export function useLocation() {
     const isOnline = typeof navigator.onLine === "boolean" ? navigator.onLine : true;
 
     try {
-      const position = await getCurrentPosition(GPS_TIMEOUT_MS);
+      const position = await getBestPosition(GPS_TIMEOUT_MS);
       if (controller.signal.aborted) return;
 
       const { latitude, longitude, accuracy } = position.coords;
-
-      if (accuracy > MAX_ACCURACY_M) {
-        setState({
-          ...INITIAL,
-          status: "error",
-          errorCode: "GPS_ACCURACY_TOO_LOW",
-          errorMessageKiny:
-            "GPS ntabwo iri ku buryo bwiza (accuracy > 150m). Gerageza hanze cyangwa shakisha manuelle.",
-          errorMessageEng:
-            "GPS accuracy is too low (> 150 m). Try outdoors or use manual search.",
-        });
-        return;
-      }
+      const fixMethod: FeedbackMethod = isOnline ? "gps" : "offline";
+      lastFixRef.current = { latitude, longitude, accuracy, method: fixMethod, recordedAt: Date.now() };
+      feedbackMethodRef.current = fixMethod;
 
       setState((s) => ({ ...s, status: "locating" }));
 
@@ -188,14 +182,17 @@ export function useLocation() {
           });
           return;
         }
+        const unavailable = err.code === err.POSITION_UNAVAILABLE;
         setState({
           ...INITIAL,
           status: "error",
-          errorCode: "GPS_ACCURACY_TOO_LOW",
-          errorMessageKiny:
-            "GPS ntabwo iri ku buryo bwiza. Gerageza hanze cyangwa shakisha manuelle.",
-          errorMessageEng:
-            "Could not obtain a precise location. Try outdoors or use manual search.",
+          errorCode: unavailable ? "GPS_UNAVAILABLE" : "GPS_TIMEOUT",
+          errorMessageKiny: unavailable
+            ? "Ntitwashoboye kubona aho uri. Hitamo umudugudu wawe ku rutonde ruri hasi."
+            : "GPS yafashe igihe kirekire. Ushobora gukomeza uhitamo umudugudu ku rutonde ruri hasi.",
+          errorMessageEng: unavailable
+            ? "The phone could not determine your location. Choose your village from the list below."
+            : "Location timed out. You can continue by choosing your village from the list below.",
         });
         return;
       }
@@ -213,20 +210,300 @@ export function useLocation() {
     }
   }, []);
 
-  return { ...state, locate, reset };
+  const chooseVillage = useCallback(async (scopeCode: string, selectionMethod: FeedbackMethod = "manual") => {
+    feedbackMethodRef.current = typeof navigator !== "undefined" && !navigator.onLine && selectionMethod === "manual" ? "offline" : selectionMethod;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setState({ ...INITIAL, status: "locating" });
+    try {
+      let json: LocateResponse;
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        // Offline picker mode: read the bundled/cached static index first.
+        // Its compact tuple rows avoid unnecessary download bytes on mobile.
+        let indexPayload: { choices?: unknown[] };
+        try {
+          const staticResponse = await fetch("/offline/location-index.json", {
+            signal: controller.signal,
+            cache: "force-cache",
+          });
+          if (!staticResponse.ok) throw new Error("static_location_index_unavailable");
+          indexPayload = await staticResponse.json() as { choices?: unknown[] };
+        } catch {
+          // Older app shells may only have the cached API index.
+          const indexResponse = await fetch("/api/locate?index=1", { signal: controller.signal });
+          if (!indexResponse.ok) throw new Error("offline_location_index_unavailable");
+          indexPayload = await indexResponse.json() as { choices?: unknown[] };
+        }
+        const rawEntries = Array.isArray(indexPayload.choices) ? indexPayload.choices : [];
+        type CachedChoice = {
+          scope_code: string;
+          name_kiny: string;
+          name_eng: string | null;
+          level: "province" | "district" | "sector" | "cell" | "village";
+          parent_scope_code: string | null;
+        };
+        const entries = rawEntries.flatMap((raw): CachedChoice[] => {
+          if (Array.isArray(raw) && raw.length >= 5) {
+            return [{
+              scope_code: String(raw[0]),
+              name_kiny: String(raw[1]),
+              name_eng: raw[2] == null ? null : String(raw[2]),
+              level: String(raw[3]) as CachedChoice["level"],
+              parent_scope_code: raw[4] == null ? null : String(raw[4]),
+            }];
+          }
+          if (raw && typeof raw === "object") {
+            return [raw as CachedChoice];
+          }
+          return [];
+        });
+        const byCode = new Map(entries.map((entry) => [entry.scope_code, entry]));
+        let current = byCode.get(scopeCode);
+        if (!current || current.level !== "village") throw new Error("village_not_in_cached_index");
+
+        const hierarchy: LocateSuccess["hierarchy"] = {};
+        let villageMatch: ConfidenceMatch | null = null;
+        for (let depth = 0; current && depth < 6; depth += 1) {
+          const match: ConfidenceMatch = {
+            scope_code: current.scope_code,
+            name_kiny: current.name_kiny,
+            name_eng: current.name_eng,
+            level: current.level,
+            confidence: 100,
+            intersection_area_m2: 0,
+          };
+          if (current.level === "province") hierarchy.province = match;
+          if (current.level === "district") hierarchy.district = match;
+          if (current.level === "sector") hierarchy.sector = match;
+          if (current.level === "cell") hierarchy.cell = match;
+          if (current.level === "village") {
+            hierarchy.village = match;
+            villageMatch = match;
+          }
+          current = current.parent_scope_code ? byCode.get(current.parent_scope_code) : undefined;
+        }
+        if (!villageMatch) throw new Error("village_hierarchy_unavailable");
+        json = {
+          status: "success",
+          matches: [villageMatch],
+          hierarchy,
+          leaders: [],
+          source: "manual",
+          warning: "USER_CONFIRMED_OFFLINE",
+        };
+      } else {
+        const response = await fetch("/api/locate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "manual", scope_code: scopeCode }),
+          signal: controller.signal,
+        });
+        json = (await response.json()) as LocateResponse;
+      }
+      if (json.status !== "success") {
+        setState({
+          ...INITIAL,
+          status: "error",
+          errorCode: json.code,
+          errorMessageKiny: json.message_kiny,
+          errorMessageEng: json.message_eng,
+        });
+        return;
+      }
+      try {
+        localStorage.setItem("iwacu-confirmed-village", JSON.stringify({
+          scope_code: scopeCode,
+          name_kiny: json.matches[0]?.name_kiny ?? "",
+          confirmed_at: new Date().toISOString(),
+        }));
+      } catch {
+        // The location selection still works if storage is disabled.
+      }
+      setState({
+        status: "success",
+        data: json,
+        errorCode: null,
+        errorMessageKiny: null,
+        errorMessageEng: null,
+        isOffline: typeof navigator !== "undefined" && !navigator.onLine,
+      });
+    } catch {
+      if (controller.signal.aborted) return;
+      setState({
+        ...INITIAL,
+        status: "error",
+        errorCode: "NETWORK_ERROR",
+        errorMessageKiny: "Interineti irimo ikibazo. Gerageza guhitamo umudugudu uri ku rutonde.",
+        errorMessageEng: "Network error. Choose a village from the list.",
+      });
+    }
+  }, []);
+
+  const locateAtCoordinate = useCallback(async (
+    latitude: number,
+    longitude: number,
+    accuracy = 200
+  ) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    lastFixRef.current = { latitude, longitude, accuracy, method: "map", recordedAt: Date.now() };
+    feedbackMethodRef.current = "map";
+    setState({ ...INITIAL, status: "locating" });
+
+    try {
+      const response = await fetch("/api/locate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude, longitude, accuracy, method: "map" }),
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      if (response.status === 429) {
+        setState({
+          ...INITIAL,
+          status: "error",
+          errorCode: "RATE_LIMIT",
+          errorMessageKiny: "Wakoze ibisabwa byinshi cyane. Tegereza gato hanyuma ugerageze nanone.",
+          errorMessageEng: "Too many requests. Please wait a moment and try again.",
+        });
+        return;
+      }
+      const json = (await response.json()) as LocateResponse;
+      if (json.status === "error") {
+        setState({
+          ...INITIAL,
+          status: "error",
+          errorCode: json.code,
+          errorMessageKiny: json.message_kiny,
+          errorMessageEng: json.message_eng,
+        });
+        return;
+      }
+      setState({
+        status: "success",
+        data: json,
+        errorCode: null,
+        errorMessageKiny: null,
+        errorMessageEng: null,
+        isOffline: false,
+      });
+    } catch {
+      if (controller.signal.aborted) return;
+      setState({
+        ...INITIAL,
+        status: "error",
+        errorCode: "NETWORK_ERROR",
+        errorMessageKiny: "Ikarita ntishoboye kugenzura ahantu. Gerageza interineti cyangwa uhitemo umudugudu ku rutonde.",
+        errorMessageEng: "The map location could not be checked. Reconnect or choose a village manually.",
+      });
+    }
+  }, []);
+
+  const submitLocationFeedback = useCallback(async (scopeCode: string): Promise<void> => {
+    const method = feedbackMethodRef.current;
+    const candidateFix = lastFixRef.current;
+    const fixIsRecent = candidateFix && Date.now() - candidateFix.recordedAt <= 30 * 60 * 1000;
+    const fix = method !== "manual" &&
+      fixIsRecent &&
+      (method !== "offline" || candidateFix?.method === "offline")
+      ? candidateFix
+      : null;
+    const response = await fetch("/api/location-feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        consent: true,
+        scope_code: scopeCode,
+        method,
+        accuracy_m: fix?.accuracy ?? null,
+        latitude: fix?.latitude ?? null,
+        longitude: fix?.longitude ?? null,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error("location_feedback_unavailable");
+    }
+  }, []);
+
+  return { ...state, locate, reset, chooseVillage, locateAtCoordinate, submitLocationFeedback };
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getCurrentPosition(timeoutMs: number): Promise<GeolocationPosition> {
+function getBestPosition(timeoutMs: number): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: timeoutMs,
-      maximumAge: 0,
-    });
+    let best: GeolocationPosition | null = null;
+    let lastError: GeolocationPositionError | null = null;
+    let settled = false;
+    let watchId: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+
+      // If GPS is already reasonably precise, use it. Otherwise also try the
+      // browser's coarse network/Wi-Fi provider and keep whichever fix is better.
+      if (best && best.coords.accuracy <= 150) {
+        resolve(best);
+        return;
+      }
+      if (lastError && lastError.code === lastError.PERMISSION_DENIED && !best) {
+        reject(lastError);
+        return;
+      }
+      const bestSoFar = best;
+      navigator.geolocation.getCurrentPosition(
+        (coarse) => {
+          if (!bestSoFar || coarse.coords.accuracy < bestSoFar.coords.accuracy) {
+            resolve(coarse);
+          } else {
+            resolve(bestSoFar);
+          }
+        },
+        (error) => {
+          if (bestSoFar) resolve(bestSoFar);
+          else reject(error);
+        },
+        {
+          enableHighAccuracy: false,
+          timeout: 5_000,
+          maximumAge: 300_000,
+        }
+      );
+    };
+
+    timer = setTimeout(finish, Math.min(timeoutMs, 10_000));
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          if (!best || position.coords.accuracy < best.coords.accuracy) best = position;
+          if (position.coords.accuracy <= 35) finish();
+        },
+        (error) => {
+          lastError = error;
+          if (error.code === error.PERMISSION_DENIED) finish();
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: timeoutMs,
+          maximumAge: 10_000,
+        }
+      );
+    } catch {
+      if (timer) clearTimeout(timer);
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: false,
+        timeout: 5_000,
+        maximumAge: 300_000,
+      });
+    }
   });
 }
 
@@ -235,6 +512,37 @@ async function runOfflineConfidence(
   longitude: number,
   accuracy: number
 ): Promise<LocateResponse> {
+  const representativeFallback = async (): Promise<LocateResponse> => {
+    try {
+      // The compact hierarchy index includes official representative points
+      // and is precached by the Service Worker. It allows an explicitly
+      // estimated village even when offline polygon data is not installed.
+      const response = await fetch("/offline/location-index.json", {
+        cache: "force-cache",
+      });
+      if (response.ok) {
+        const estimate = nearestVillageEstimateFromIndex(
+          await response.json(),
+          latitude,
+          longitude,
+          accuracy,
+          "OFFLINE_REPRESENTATIVE_POINT_ESTIMATE"
+        );
+        if (estimate) return estimate;
+      }
+    } catch {
+      // Fall through to the honest OFFLINE_CACHE error if even the index is absent.
+    }
+    return {
+      status: "error",
+      code: "OFFLINE_CACHE",
+      message_kiny:
+        "Uri offline kandi urutonde rw'ahantu ntirwabitswe. Ongera uhuze interineti cyangwa uhitemo aho uzi ku rutonde.",
+      message_eng:
+        "You are offline and the location index is not cached. Reconnect or use a saved place list.",
+    };
+  };
+
   try {
     let response: Response | undefined;
     if (typeof caches !== "undefined") {
@@ -252,31 +560,17 @@ async function runOfflineConfidence(
         // Fetch failed
       }
     }
-    if (!response || !response.ok) {
-      return {
-        status: "error",
-        code: "OFFLINE_CACHE",
-        message_kiny:
-          "Uri offline kandi nta makuru yabitswe. Ongera uhuze interineti.",
-        message_eng:
-          "You are offline and no cached data is available. Please reconnect.",
-      };
-    }
+    if (!response || !response.ok) return representativeFallback();
+
     const geojson = (await response.json()) as OfflineBoundaryCollection;
-    return calculateConfidenceOffline(
+    const polygonResult = calculateConfidenceOffline(
       latitude,
       longitude,
       accuracy,
       geojson
     );
+    return polygonResult.status === "success" ? polygonResult : representativeFallback();
   } catch {
-    return {
-      status: "error",
-      code: "OFFLINE_CACHE",
-      message_kiny:
-        "Uri offline kandi nta makuru yabitswe. Ongera uhuze interineti.",
-      message_eng:
-        "You are offline and no cached data is available. Please reconnect.",
-    };
+    return representativeFallback();
   }
 }

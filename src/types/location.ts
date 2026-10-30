@@ -4,7 +4,8 @@ import type { LeaderPublic } from "./leader";
 /** All 15 mandatory error states */
 export type LocationErrorCode =
   | "GPS_DENIED"
-  | "GPS_ACCURACY_TOO_LOW"       // accuracy > 150 m
+  | "GPS_UNAVAILABLE"
+  | "GPS_TIMEOUT"
   | "OUTSIDE_RWANDA"
   | "POINT_IN_GAP"
   | "POINT_IN_OVERLAP"
@@ -36,7 +37,7 @@ export interface LocateSuccess {
     district?: ConfidenceMatch;
   };
   leaders: LeaderPublic[];
-  source: "gps" | "ip" | "manual" | "offline";
+  source: "gps" | "ip" | "manual" | "offline" | "nearest" | "map";
   warning?: string;
 }
 

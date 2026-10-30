@@ -33,13 +33,31 @@ export async function createSupabaseServerClient() {
 export function isSupabaseConfigured(): boolean {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  return Boolean(
-    url &&
-      key &&
-      !url.includes("placeholder") &&
-      !url.includes("xxxxxxxx") &&
-      !key.includes("eyJ...")
-  );
+  if (
+    !url ||
+    !key ||
+    url.includes("placeholder") ||
+    url.includes("xxxxxxxx") ||
+    key.includes("eyJ...")
+  ) {
+    return false;
+  }
+
+  // Refuse to start privileged Supabase calls when a legacy JWT service-role
+  // key belongs to a different project than the configured URL. Never log key
+  // contents. Modern sb_secret_* keys do not carry a decodable project ref.
+  const urlRef = url.match(/^https:\/\/([a-z0-9]+)\.supabase\.co\/?$/i)?.[1];
+  const parts = key.split(".");
+  if (urlRef && parts.length === 3) {
+    try {
+      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as { ref?: string; role?: string };
+      if (payload.ref && payload.ref !== urlRef) return false;
+      if (payload.role && payload.role !== "service_role") return false;
+    } catch {
+      if (key.startsWith("eyJ")) return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -51,6 +69,48 @@ export function createSupabaseServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "placeholder-service-role-key";
 
+  return createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+
+/**
+ * Stateless public client for citizen-facing location lookups.
+ * It never uses a service-role key; RLS protects public boundary reads.
+ */
+export function isSupabasePublicConfigured(): boolean {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !key || url.includes("placeholder") || key.includes("xxxxxxxx")) {
+    return false;
+  }
+  const urlRef = url.match(/^https:\/\/([a-z0-9]+)\.supabase\.co\/?$/i)?.[1];
+  const tokenParts = key.split(".");
+  if (urlRef && tokenParts.length === 3) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(tokenParts[1], "base64url").toString("utf8")
+      ) as { ref?: string };
+      if (payload.ref && payload.ref !== urlRef) return false;
+    } catch {
+      // New publishable keys aren't JWTs; the URL still determines the target project.
+    }
+  }
+  return true;
+}
+
+export function createSupabasePublicClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    "placeholder-public-key";
   return createClient(url, key, {
     auth: {
       autoRefreshToken: false,
