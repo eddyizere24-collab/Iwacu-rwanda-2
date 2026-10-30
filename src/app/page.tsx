@@ -8,6 +8,7 @@ import { RwandanSun } from "@/components/RwandanSun";
 import { AiSearchAssistant } from "@/components/AiSearchAssistant";
 import { VillagePicker } from "@/components/VillagePicker";
 import { MapPinPicker } from "@/components/MapPinPicker";
+import { NearbyLandmarks } from "@/components/NearbyLandmarks";
 import {
   MapPin,
   RotateCcw,
@@ -216,6 +217,15 @@ export default function HomePage() {
             <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
               void locateAtCoordinate(latitude, longitude, accuracy);
             }} />
+            {Number.isFinite(data.latitude) && Number.isFinite(data.longitude) && (
+              <NearbyLandmarks
+                latitude={data.latitude as number}
+                longitude={data.longitude as number}
+                onSelect={(latitude, longitude, accuracy) => {
+                  void locateAtCoordinate(latitude, longitude, accuracy);
+                }}
+              />
+            )}
             <details className="rounded-2xl border border-border bg-card p-3">
               <summary className="cursor-pointer min-h-[42px] py-2 text-sm font-semibold">Si hano? Hindura umudugudu (uburyo bwa nyuma)</summary>
               <div className="mt-3"><VillagePicker onSelect={chooseVillage} /></div>
