@@ -14,7 +14,6 @@ import {
   Layers,
   ShieldCheck,
   CheckCircle2,
-  AlertTriangle,
 } from "lucide-react";
 
 export default function HomePage() {
