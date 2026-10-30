@@ -10,6 +10,10 @@ const choices = [
   ["RW-P1-D11-S1101-C110101-V11010101", "Gihanga", "Gihanga", "village", "RW-P1-D11-S1101-C110101", -1.944, 30.062],
   ["RW-P1-D11-S1101-C110101-V11010102", "Akabugene", "Akabugene", "village", "RW-P1-D11-S1101-C110101", -1.99, 30.15],
   ["RW-P1-D11-S1101-C110101-V11010103", "Nyamabuye", "Nyamabuye", "village", "RW-P1-D11-S1101-C110101", -2.05, 30.2],
+  ["RW-P1-D12", "Gasabo", "Gasabo", "district", "RW-P1", -1.88, 30.15],
+  ["RW-P1-D12-S1201", "Remera", "Remera", "sector", "RW-P1-D12", -1.88, 30.16],
+  ["RW-P1-D12-S1201-C120101", "Nyarutarama", "Nyarutarama", "cell", "RW-P1-D12-S1201", -1.89, 30.17],
+  ["RW-P1-D12-S1201-C120101-V12010101", "Rugando", "Rugando", "village", "RW-P1-D12-S1201-C120101", -1.90, 30.18],
 ];
 
 test("uses real index villages and marks the result as an estimate", () => {
@@ -66,4 +70,32 @@ test("supports object-shaped choices when a caller supplies them", () => {
   }, -1.9441, 30.0619);
   assert.ok(result);
   assert.equal(result.matches[0]?.name_kiny, "Gihanga");
+});
+
+test("aggregates candidate weights across all villages before showing only the top three", () => {
+  const result = nearestVillageEstimateFromIndex({ choices }, -1.9441, 30.0619, 50_000);
+  assert.ok(result);
+  assert.equal(result.matches.length, 3);
+  const districts = result.hierarchyCandidates?.district ?? [];
+  assert.ok(districts.some((candidate) => candidate.scope_code === "RW-P1-D11"));
+  assert.ok(districts.some((candidate) => candidate.scope_code === "RW-P1-D12"));
+  const villageShare = (result.hierarchyCandidates?.village ?? [])
+    .reduce((sum, candidate) => sum + candidate.confidence, 0);
+  assert.ok(villageShare > 0 && villageShare <= 100.01);
+});
+
+test("keeps an answer for every indoor-like reported accuracy radius", () => {
+  for (const accuracy of [100, 500, 2_000, 5_000, 20_000, 50_000]) {
+    const result = nearestVillageEstimateFromIndex({ choices }, -1.9441, 30.0619, accuracy);
+    assert.ok(result, `missing answer at accuracy ${accuracy} m`);
+    assert.equal(result.status, "success");
+    assert.ok(result.matches.length > 0);
+    assert.ok(result.hierarchy.province);
+    assert.ok(result.hierarchy.district);
+    assert.ok((result.hierarchyCandidates?.village?.length ?? 0) > 0);
+    for (const candidate of result.hierarchyCandidates?.village ?? []) {
+      assert.ok(Number.isFinite(candidate.confidence));
+      assert.ok(candidate.confidence >= 0 && candidate.confidence <= 100);
+    }
+  }
 });
