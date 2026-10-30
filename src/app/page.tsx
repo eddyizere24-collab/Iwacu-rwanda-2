@@ -344,7 +344,7 @@ export default function HomePage() {
             )}
             {data.source === "last-known" && (
               <p className="mb-4 rounded-xl bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-                Ibi bishingiye ku makuru ya telefone yari yarabonye mbere. Intera y'ukuri ishobora kuba yarahindutse.
+                Ibi bishingiye ku hantu wemeje mbere cyangwa ku makuru ya telefone yari yarabonye. Igihe cyashize gishobora gutuma aho uri harahinduka; si gihamya y'aho uri ubu.
               </p>
             )}
             {(data.source === "gps" || data.source === "network" || data.source === "map" || data.source === "offline") && (
