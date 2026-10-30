@@ -27,7 +27,7 @@ const LABEL: Record<BoundaryLevel, string> = {
   cell: "Akagari",
   village: "Umudugudu",
 };
-const CACHE_PREFIX = "iwacu-location-choices-v2:";
+const CACHE_PREFIX = "iwacu-location-choices-v3:";
 const ALLOWED = new Set<BoundaryLevel>(["province", "district", "sector", "cell", "village"]);
 
 function normalizeName(value: string): string {
@@ -117,7 +117,21 @@ async function loadStaticChoices(level: BoundaryLevel, parentScopeCode: string, 
 async function loadChoices(level: BoundaryLevel, parentScopeCode: string, query: string): Promise<Choice[]> {
   const key = cacheKey(level, parentScopeCode, query);
   const cached = readCache(key);
-  if (cached?.length) return cached;
+  if (cached?.length) {
+    // Old releases accidentally cached the full 17k national index under a
+    // root-level picker key. Never trust cache rows without checking the
+    // requested administrative level and exact parent.
+    const validCached = query.trim()
+      ? cached.filter((choice) => choice.level === "village")
+      : cached.filter((choice) =>
+          choice.level === level &&
+          (level === "province"
+            ? !choice.parent_scope_code || choice.parent_scope_code === "RW"
+            : choice.parent_scope_code === parentScopeCode)
+        );
+    if (validCached.length > 0) return validCached;
+    try { localStorage.removeItem(key); } catch { /* storage may be disabled */ }
+  }
 
   if (typeof navigator !== "undefined" && navigator.onLine !== false) {
     try {
