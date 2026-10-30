@@ -141,17 +141,40 @@ async function loadChoices(level: BoundaryLevel, parentScopeCode: string, query:
       const response = await fetch(`/api/locate?${params.toString()}`, { cache: "no-store" });
       if (!response.ok) throw new Error("choices_unavailable");
       const choices = decodeChoices(await response.json(), parentScopeCode);
-      writeCache(key, choices);
-      return choices;
+      if (choices.length > 0) {
+        writeCache(key, choices);
+        return choices;
+      }
+      // A misconfigured/empty API response must not hide the bundled NISR list.
     } catch {
       // Try the offline index after online lookup failure.
     }
   }
 
   const choices = await loadStaticChoices(level, parentScopeCode, query);
-  writeCache(key, choices);
-  return choices;
-}
+  if (choices.length > 0) {
+    writeCache(key, choices);
+    return choices;
+  }
+  // Some older index rows omit parent_scope_code. Use the official hierarchy
+  // code prefix as a second way to identify children, while still restricting
+  // results to the requested level.
+  if (!query.trim() && parentScopeCode) {
+    const response = await fetch("/offline/location-index.json", { cache: "force-cache" });
+    if (response.ok) {
+      const all = decodeChoices(await response.json(), "");
+      const byPrefix = all.filter((choice) =>
+        choice.level === level && choice.scope_code.startsWith(parentScopeCode + "-")
+      );
+      if (byPrefix.length > 0) {
+        writeCache(key, byPrefix);
+        return byPrefix;
+      }
+    }
+  }
+  writeCache(key, []);
+  return [];
+
 
 export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => void }) {
   const [level, setLevel] = useState<BoundaryLevel>("province");
