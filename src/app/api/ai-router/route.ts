@@ -123,7 +123,7 @@ function queryForLevel(level: UnitLevel, token: string): { where: string; fields
   return { where: like, fields: fields[level] };
 }
 
-async function findOfficialUnit(query: string): Promise<OfficialUnit | null> {
+export async function findOfficialUnit(query: string): Promise<OfficialUnit | null> {
   const tokens = searchTokens(query);
   const levels = preferredLevels(query);
   if (!tokens.length) return null;
@@ -207,7 +207,7 @@ async function findOfficialUnit(query: string): Promise<OfficialUnit | null> {
   return null;
 }
 
-async function fetchLeadersForUnit(unit: OfficialUnit): Promise<LeaderPublic[]> {
+export async function fetchLeadersForUnit(unit: OfficialUnit): Promise<LeaderPublic[]> {
   if (!isSupabaseConfigured()) return [];
   const supabase = createSupabaseServiceClient();
   const scopeCodes = [
@@ -255,7 +255,7 @@ async function fetchLeadersForUnit(unit: OfficialUnit): Promise<LeaderPublic[]> 
   });
 }
 
-function answerForUnit(unit: OfficialUnit, leaders: LeaderPublic[]) {
+export function answerForUnit(unit: OfficialUnit, leaders: LeaderPublic[]) {
   const hierarchy = [
     unit.province && `Intara/Umujyi: ${unit.province}`,
     unit.district && `Akarere: ${unit.district}`,
@@ -285,41 +285,75 @@ export async function POST(req: NextRequest) {
     }
     query = parsed.data.query;
 
-    const unit = await findOfficialUnit(query);
-    if (unit) {
-      const leaders = await fetchLeadersForUnit(unit);
-      const suggestions = unit.level === "province"
-        ? [`Uturere tugize ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
-        : unit.level === "district"
-          ? [`Imirenge igize Akarere ka ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
-          : unit.level === "sector"
-            ? [`Utugari tugize Umurenge wa ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
-            : unit.level === "cell"
-              ? [`Imidugudu iri muri ${unit.name_kiny}`, `Abayobozi bo muri ${unit.name_kiny}`, "Menya aho ndi ukoresheje GPS"]
-              : [`Akagari ${unit.cell} ibarizwamo`, `Umurenge wa ${unit.sector}`, "Menya aho ndi ukoresheje GPS"];
+    if (!isSupabaseConfigured()) {
+      return NextResponse.json({
+        status: "error",
+        message_kiny: "Ubushakashatsi bw'ahantu ntibubashije gutangira kuko database itaboneka.",
+      }, { status: 503 });
+    }
 
+    // Location discovery uses this database RPC only. NISR and leader helpers
+    // remain defined above for deferred work, but are not called on this path.
+    const supabase = createSupabaseServiceClient();
+    const { data, error } = await supabase.rpc("search_places", {
+      p_query: query,
+      p_limit: 10,
+    });
+    if (error) {
+      console.error("[ai-router] search_places failed:", error.message);
+      return NextResponse.json({
+        status: "error",
+        message_kiny: "Ubushakashatsi bw'ahantu ntibubashije kuboneka ubu.",
+      }, { status: 503 });
+    }
+
+    const rows = Array.isArray(data) ? data : data ? [data] : [];
+    if (rows.length === 0) {
       return NextResponse.json({
         status: "success",
-        answer_kiny: answerForUnit(unit, leaders),
-        matched_leaders: leaders,
-        jurisdiction_info: {
-          province: unit.province,
-          district: unit.district,
-          sector: unit.sector,
-          cell: unit.cell,
-          village: unit.village,
-        },
-        suggestions,
-        source: "NISR Village Boundary 2022",
+        answer_kiny: "Ntabwo twabonye ahantu hahuye n'ibyo wanditse muri search_places. Gerageza andi magambo cyangwa izina ry'umudugudu, akagari, umurenge, akarere cyangwa intara. Nta zina twihimbiye.",
+        matched_places: [],
+        matched_leaders: [],
+        suggestions: ["Menya aho ndi ukoresheje GPS", "Gerageza izina ry'akarere", "Gerageza izina ry'umudugudu"],
+        source: "search_places",
       });
     }
 
-    // No official boundary name was matched. Avoid inventing leaders or places.
+    const matchedPlaces = rows.slice(0, 10).map((raw: unknown) => {
+      const row = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+      const name = String(row.name_kiny ?? row.place_name_kiny ?? row.name ?? row.place_name ?? "").trim();
+      const level = String(row.level ?? row.place_type ?? row.kind ?? "").trim();
+      return {
+        place_id: row.place_id ?? row.id ?? row.scope_code ?? null,
+        name_kiny: name,
+        name_eng: row.name_eng == null ? null : String(row.name_eng),
+        level,
+        parent_place_id: row.parent_place_id ?? row.parent_scope_code ?? null,
+        path: row.path ?? null,
+      };
+    }).filter((item: { name_kiny: string }) => item.name_kiny.length > 0);
+
+    if (matchedPlaces.length === 0) {
+      return NextResponse.json({
+        status: "success",
+        answer_kiny: "Ntabwo twabonye izina ry'ahantu rihuye n'ibyo wanditse muri search_places. Nta zina twihimbiye.",
+        matched_places: [],
+        matched_leaders: [],
+        suggestions: ["Menya aho ndi ukoresheje GPS"],
+        source: "search_places",
+      });
+    }
+
+    const names = matchedPlaces.slice(0, 5).map((place: { name_kiny: string; level: string }) =>
+      place.level ? `${place.name_kiny} (${place.level})` : place.name_kiny
+    );
     return NextResponse.json({
       status: "success",
-      answer_kiny: "Ntabwo twabonye izina ry'ahantu rihuye n'ibyo wanditse muri dosiye y'imbibi za NISR. Gerageza izina ry'umudugudu, akagari, umurenge, akarere cyangwa intara uko ryanditswe.",
+      answer_kiny: `Ibisubizo bya search_places: ${names.join("; ")}. Aya ni amazina yagarutse muri database; nta muyobozi cyangwa izina byahimbwe.`,
+      matched_places: matchedPlaces,
       matched_leaders: [],
-      suggestions: ["Menya aho ndi ukoresheje GPS", "Shakisha Akarere ka Gasabo", "Shakisha Umujyi wa Kigali"],
+      suggestions: ["Menya aho ndi ukoresheje GPS", "Hitamo ahantu ku rutonde rw'ubuyobozi"],
+      source: "search_places",
     });
   } catch (error) {
     console.error("[ai-router] error:", error);
