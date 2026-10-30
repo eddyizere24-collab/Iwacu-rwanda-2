@@ -12,6 +12,7 @@ import { createSupabasePublicClient, isSupabasePublicConfigured } from "@/lib/su
 import { createLocateError } from "@/lib/utils/errors";
 import { rankVillageCandidates } from "@/lib/location-ranking";
 import { aggregateLocationHierarchy } from "@/lib/location-hierarchy";
+import { createRwandaProvincePrior } from "@/lib/location-prior";
 import { listOfficialNationalLocationIndex, locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
 import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
 import offlineLocationIndex from "../../../../public/offline/location-index.json";
@@ -212,83 +213,7 @@ export async function POST(
 async function respondWithCountryOnlyPrior(
   hasRwandaIpCountry: boolean
 ): Promise<NextResponse<LocateResponse>> {
-  let provinceRows: Array<{
-    scope_code: string;
-    name_kiny: string;
-    name_eng: string | null;
-    level: string;
-  }> = [];
-  let countryName = hasRwandaIpCountry ? "Rwanda" : "Intara z'u Rwanda (igereranya ridafite ikimenyetso)";
-
-  if (isSupabasePublicConfigured()) {
-    try {
-      const supabase = createSupabasePublicClient();
-      const [provinceResult, countryResult] = await Promise.all([
-        supabase.from("boundaries")
-          .select("scope_code, name_kiny, name_eng, level")
-          .eq("level", "province")
-          .is("valid_to", null)
-          .order("scope_code", { ascending: true }),
-        supabase.from("boundaries")
-          .select("scope_code, name_kiny, name_eng, level")
-          .eq("level", "country")
-          .is("valid_to", null)
-          .maybeSingle(),
-      ]);
-      provinceRows = provinceResult.data ?? [];
-      countryName = countryResult.data?.name_kiny ?? countryName;
-    } catch (error) {
-      console.warn("[locate] country-only prior lookup failed:", error);
-    }
-  }
-
-  if (provinceRows.length === 0) {
-    provinceRows = getStaticLocationChoices()
-      .filter((choice) => choice.level === "province")
-      .map((choice) => ({
-        scope_code: choice.scope_code,
-        name_kiny: choice.name_kiny,
-        name_eng: choice.name_eng,
-        level: choice.level,
-      }));
-  }
-
-  const share = provinceRows.length > 0 ? 100 / provinceRows.length : 0;
-  const provinces: ConfidenceMatch[] = provinceRows.map((row) => ({
-    scope_code: row.scope_code,
-    name_kiny: row.name_kiny,
-    name_eng: row.name_eng,
-    level: "province",
-    confidence: Math.round(share * 100) / 100,
-    intersection_area_m2: 0,
-  }));
-  const country: ConfidenceMatch = {
-    scope_code: "RW",
-    name_kiny: countryName,
-    name_eng: "Rwanda",
-    level: "country",
-    confidence: hasRwandaIpCountry ? 100 : 0,
-    intersection_area_m2: 0,
-  };
-
-  const response: LocateSuccess = {
-    status: "success",
-    matches: provinces,
-    hierarchy: {
-      country,
-      province: provinces[0],
-    },
-    hierarchyCandidates: {
-      province: provinces,
-    },
-    leaders: [],
-    source: "prior",
-    accuracy_m: 50_000,
-    warning: hasRwandaIpCountry
-      ? "COUNTRY_ONLY_UNINFORMATIVE_PROVINCE_PRIOR"
-      : "NO_DEVICE_LOCATION_SIGNAL_UNINFORMED_Rwanda_BASELINE",
-  };
-  return NextResponse.json(response);
+  return NextResponse.json(createRwandaProvincePrior(hasRwandaIpCountry));
 }
 
 async function buildHierarchicalSummary(
@@ -512,27 +437,21 @@ async function respondWithOfficialFallback(
       )
     : null;
   const result: LocateResponse = staticEstimate ?? officialResult;
-  const response: LocateResponse =
-    result.status === "success" && method === "map" && result.source !== "nearest"
-      ? { ...result, source: "map" }
-      : result.status === "success"
-        ? {
-            ...result,
-            source: result.source === "nearest" ? "nearest" : method,
-            accuracy_m: accuracy,
-            latitude,
-            longitude,
-          }
-        : result;
-  const status =
-    response.status === "success"
-      ? 200
-      : response.code === "NETWORK_ERROR"
-        ? 502
-        : response.code === "POINT_IN_GAP" || response.code === "CONFIDENCE_TOO_LOW"
-          ? 422
-          : 400;
-  return NextResponse.json(response, { status });
+  if (result.status === "error") {
+    // Even when both the live NISR service and bundled representative index
+    // are unavailable, return an explicit service-area prior rather than an
+    // empty/dead-end response. This is not claimed to identify the person.
+    return NextResponse.json(createRwandaProvincePrior(method === "ip"), { status: 200 });
+  }
+
+  const response: LocateSuccess = {
+    ...result,
+    source: result.source === "nearest" ? "nearest" : method,
+    accuracy_m: accuracy,
+    latitude,
+    longitude,
+  };
+  return NextResponse.json(response, { status: 200 });
 }
 
 
