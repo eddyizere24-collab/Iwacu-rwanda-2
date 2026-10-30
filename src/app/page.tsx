@@ -91,7 +91,7 @@ export default function HomePage() {
       };
     }
     return {
-      text: "Icyifuzo cya GPS/ikarita — genzura umudugudu mbere yo kuwemeza",
+      text: "Ibyabonetse kuri telefone/ikarita — genzura umudugudu mbere yo kuwemeza",
       colorClass: "text-amber-700 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300",
     };
   }
@@ -399,6 +399,7 @@ export default function HomePage() {
               ) : null;
             })()}
 
+            {data.hierarchy?.village && (
             <div className="mt-5 rounded-2xl border border-border bg-muted/20 p-4">
               <p className="text-sm font-bold">Fasha kunoza igenzura ry'ahantu (ubishatse gusa)</p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -431,6 +432,7 @@ export default function HomePage() {
                 <p role="status" className="mt-2 text-xs text-amber-700">Ntibyashobotse kubika igitekerezo. Ushobora gukomeza gukoresha urubuga.</p>
               )}
             </div>
+            )} 
           </div>
 
         </section>
@@ -459,8 +461,7 @@ export default function HomePage() {
             </h3>
 
             <p className="mt-3 text-center text-xs sm:text-sm text-muted-foreground leading-relaxed">
-              Telefone yawe iri bukubaze niba wemera. Nukanda «Emera», tuzamenya
-              umudugudu wawe tukubwire abayobozi bawo. Nta konti ukeneye.
+              Telefone yawe iri bukubaze niba wemera kumenya aho uri. Tuzagerageza network/Wi-Fi na GPS icyarimwe, hanyuma tunoze igisubizo uko ibimenyetso bishya biboneka. Nta konti ukeneye.
             </p>
 
             <div className="mt-6 flex flex-col sm:flex-row gap-2.5">
