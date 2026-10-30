@@ -42,6 +42,9 @@ export interface LocateSuccess {
   warning?: string;
   /** Device-reported uncertainty radius, inflated for stale fixes when applicable. */
   accuracy_m?: number;
+  /** WGS84 point that produced the answer, when a measured coordinate exists. */
+  latitude?: number;
+  longitude?: number;
   /** Age of the underlying device fix at the time it was submitted. */
   fix_age_ms?: number;
   /** Candidate shares aggregated by administrative level; geometric shares, not calibrated probabilities. */
