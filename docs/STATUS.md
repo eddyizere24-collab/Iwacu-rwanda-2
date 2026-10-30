@@ -38,7 +38,15 @@ PR branch, **SQL only, NOT /api/locate**. Current calculate_location_confidence 
 
 **Gap probes (SQL-only):** Gisenyi shore A, Gisenyi shore B, Rubavu shore C, Kivu south shore and Kigali control had polygons and candidates. Kivu lake sample (29.20, -1.75), outside west check and outside north check were outside the country polygon and returned zero RPC candidates. Application fallback results for these points remain UNVERIFIED. This confirms the RPC alone does not satisfy a never-dead-end rule for gaps/outside-country locations.
 
-Scores are synthetic diagnostics, not real-device/nationwide validation. Strong wording is only a candidate when measured top-1 rate is about 97% or better (20 m/100 m in the interior set and 20 m only in the border set); keep it off until /api/locate tests confirm identical rates using the intended RPC. At 300 m and beyond require checking/manual confirmation.
+### T3 wording threshold table
+| Reported accuracy radius | Interior top-1 | Near-border top-1 | Meets ~97% in both sets? | Wording decision |
+|---:|---:|---:|---|---|
+| 20 m | 100.00% | 98.56% | Yes, SQL only | Candidate only after API verification; strongest wording is still disabled pending that check. |
+| 100 m | 98.67% | 84.17% | No | Ask the citizen to check/confirm. |
+| 300 m | 83.33% | 55.40% | No | Uncertain; show sector/cell and picker. |
+| 1,000 m | 12.67% | Not tested in border set | No | Estimate/manual confirmation only. |
+
+Scores are synthetic diagnostics, not real-device/nationwide validation. Current UI labels use a geometry score threshold (>=80), not the measured accuracy-radius bands above; those are not interchangeable. The code still contains the strongest wording, so T3 remains IN PROGRESS. It must be removed or tied to an API-validated accuracy tier before release. At 300 m and beyond require checking/manual confirmation.
 
 ## 4. BLOCKED
 Current Preview deployment is READY but on older commit 1cd3f2ea8ece5a9edafba15a5e310a8119c00a0c, behind the report/PR head. Direct live API POST tests are not available from this environment. Vercel masks the URL variable; its destination is UNVERIFIED. Owner should not send key values.
