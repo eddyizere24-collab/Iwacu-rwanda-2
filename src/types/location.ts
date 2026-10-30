@@ -30,6 +30,7 @@ export interface LocateSuccess {
   status: "success";
   matches: ConfidenceMatch[];   // sorted by confidence DESC
   hierarchy: {
+    country?: ConfidenceMatch;
     province?: ConfidenceMatch;
     village?: ConfidenceMatch;
     cell?: ConfidenceMatch;
@@ -37,8 +38,14 @@ export interface LocateSuccess {
     district?: ConfidenceMatch;
   };
   leaders: LeaderPublic[];
-  source: "gps" | "ip" | "manual" | "offline" | "nearest" | "map";
+  source: "gps" | "network" | "ip" | "manual" | "offline" | "nearest" | "map" | "last-known" | "prior";
   warning?: string;
+  /** Device-reported uncertainty radius, inflated for stale fixes when applicable. */
+  accuracy_m?: number;
+  /** Age of the underlying device fix at the time it was submitted. */
+  fix_age_ms?: number;
+  /** Candidate shares aggregated by administrative level; geometric shares, not calibrated probabilities. */
+  hierarchyCandidates?: Partial<Record<"province" | "district" | "sector" | "cell" | "village", ConfidenceMatch[]>>;
 }
 
 export interface LocateError {
