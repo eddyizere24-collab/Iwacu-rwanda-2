@@ -7,6 +7,7 @@ import type { LeaderPublic } from "@/types/leader";
 import { calculateConfidenceOffline } from "@/lib/turf-logic";
 import type { OfflineBoundaryCollection } from "@/lib/turf-logic";
 import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
+import { createRwandaProvincePrior } from "@/lib/location-prior";
 
 export type LocationStatus =
   | "idle"
@@ -80,6 +81,7 @@ export function useLocation() {
 
     const online = typeof navigator !== "undefined" && navigator.onLine !== false;
     let bestAccuracy = Number.POSITIVE_INFINITY;
+    let bestHasCoordinates = false;
     let firstAnswerResolved = false;
     let resolveFirstAnswer: (() => void) | null = null;
     const firstAnswer = new Promise<void>((resolve) => { resolveFirstAnswer = resolve; });
@@ -90,8 +92,10 @@ export function useLocation() {
     };
 
     const showSuccess = (json: LocateSuccess, effectiveAccuracy: number, fixAgeMs: number, notice?: string, point?: { latitude: number; longitude: number }) => {
-      if (controller.signal.aborted || effectiveAccuracy >= bestAccuracy) return;
+      const hasCoordinates = Boolean(point || (Number.isFinite(json.latitude) && Number.isFinite(json.longitude)));
+      if (controller.signal.aborted || effectiveAccuracy > bestAccuracy || (effectiveAccuracy === bestAccuracy && bestHasCoordinates && !hasCoordinates)) return;
       bestAccuracy = effectiveAccuracy;
+      bestHasCoordinates = hasCoordinates;
       setState({
         status: "success",
         data: {
@@ -112,6 +116,20 @@ export function useLocation() {
 
     const showNotice = (notice: string) => {
       setState((current) => ({ ...current, noticeKiny: notice }));
+    };
+
+    const showRwandaPrior = (notice: string) => {
+      if (controller.signal.aborted || firstAnswerResolved) return;
+      setState({
+        status: "success",
+        data: createRwandaProvincePrior(false),
+        errorCode: null,
+        errorMessageKiny: null,
+        errorMessageEng: null,
+        isOffline: !online,
+        noticeKiny: notice,
+      });
+      signalFirstAnswer();
     };
 
     const submitFix = async (
@@ -250,13 +268,7 @@ export function useLocation() {
         new Promise<void>((resolve) => setTimeout(resolve, 8_000)),
       ]);
       if (!firstAnswerResolved && !controller.signal.aborted) {
-        setState({
-          ...INITIAL,
-          status: "error",
-          errorCode: "BROWSER_NOT_SUPPORTED",
-          errorMessageKiny: "Telefone ntitanga aho iri kuri ubu. Reba niba Location ifunguye cyangwa ukoreshe ikarita iri hasi.",
-          errorMessageEng: "This browser cannot provide a location fix. Check phone Location settings or use the map below.",
-        });
+        showRwandaPrior("Nta coordinates telefone yashoboye gutanga. Izi ntara ni prior ingana gusa, si aho uri hapimwe.");
       }
       return;
     }
@@ -311,13 +323,7 @@ export function useLocation() {
     ]);
 
     if (!firstAnswerResolved && !controller.signal.aborted) {
-      setState((current) => ({
-        ...current,
-        status: "error",
-        errorCode: "GPS_TIMEOUT",
-        errorMessageKiny: "Nta kimenyetso cyihuse kirabonetse. Gushakisha birakomeza; ushobora kureba ikarita iri hasi.",
-        errorMessageEng: "No quick location signal arrived. Location watching continues; use the map below or try near a window.",
-      }));
+      showRwandaPrior("Nta coordinates ziraboneka. Turacyategereje GPS/network; mu gihe gito, intara zigaragara ni amahitamo angana gusa, si amahirwe apimwe.");
     }
   }, [stopLocationWatch]);
 
