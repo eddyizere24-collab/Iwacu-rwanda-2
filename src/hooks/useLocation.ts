@@ -182,14 +182,17 @@ export function useLocation() {
           });
           return;
         }
+        const unavailable = err.code === err.POSITION_UNAVAILABLE;
         setState({
           ...INITIAL,
           status: "error",
-          errorCode: "GPS_ACCURACY_TOO_LOW",
-          errorMessageKiny:
-            "GPS ntabwo iri ku buryo bwiza. Gerageza hanze cyangwa shakisha manuelle.",
-          errorMessageEng:
-            "Could not obtain a precise location. Try outdoors or use manual search.",
+          errorCode: unavailable ? "GPS_UNAVAILABLE" : "GPS_TIMEOUT",
+          errorMessageKiny: unavailable
+            ? "Ntitwashoboye kubona aho uri. Hitamo umudugudu wawe ku rutonde ruri hasi."
+            : "GPS yafashe igihe kirekire. Ushobora gukomeza uhitamo umudugudu ku rutonde ruri hasi.",
+          errorMessageEng: unavailable
+            ? "The phone could not determine your location. Choose your village from the list below."
+            : "Location timed out. You can continue by choosing your village from the list below.",
         });
         return;
       }
