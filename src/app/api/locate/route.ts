@@ -11,6 +11,7 @@ import { z } from "zod";
 import { createSupabasePublicClient, isSupabasePublicConfigured } from "@/lib/supabase/server";
 import { createLocateError } from "@/lib/utils/errors";
 import { rankVillageCandidates } from "@/lib/location-ranking";
+import { aggregateLocationHierarchy } from "@/lib/location-hierarchy";
 import { listOfficialNationalLocationIndex, locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
 import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
 import offlineLocationIndex from "../../../../public/offline/location-index.json";
@@ -26,7 +27,7 @@ const LocateBodySchema = z.object({
   longitude: z.number().min(-180).max(180),
   // Accept any finite positive GPS radius; downstream PostGIS/NISR work is capped safely.
   accuracy: z.number().finite().positive(),
-  method: z.enum(["gps", "map"]).optional().default("gps"),
+  method: z.enum(["gps", "map", "network", "ip"]).optional().default("gps"),
 });
 
 interface RpcRow {
@@ -51,6 +52,29 @@ export async function POST(
         createLocateError("NETWORK_ERROR", { reason: "invalid_json" }),
         { status: 400 }
       );
+    }
+
+    if (body && typeof body === "object" && (body as { mode?: unknown }).mode === "ip") {
+      const country = req.headers.get("x-vercel-ip-country");
+      const ipLatitude = Number(req.headers.get("x-vercel-ip-latitude"));
+      const ipLongitude = Number(req.headers.get("x-vercel-ip-longitude"));
+      if (country && country !== "RW") {
+        return NextResponse.json(createLocateError("OUTSIDE_RWANDA", { ip_country: country }), { status: 200 });
+      }
+      if (
+        Number.isFinite(ipLatitude) && Number.isFinite(ipLongitude) &&
+        ipLatitude >= -90 && ipLatitude <= 90 && ipLongitude >= -180 && ipLongitude <= 180 &&
+        (country === "RW" || (
+          ipLongitude >= 28.5 && ipLongitude <= 31.2 &&
+          ipLatitude >= -3.2 && ipLatitude <= -0.7
+        ))
+      ) {
+        // Vercel IP coordinates are a coarse network hint, not device GPS.
+        // Use the largest supported uncertainty radius and label the source.
+        body = { latitude: ipLatitude, longitude: ipLongitude, accuracy: 50_000, method: "ip" };
+      } else {
+        return respondWithCountryOnlyPrior(country === "RW");
+      }
     }
 
     if (body && typeof body === "object" && (body as { mode?: unknown }).mode === "manual") {
@@ -127,7 +151,7 @@ export async function POST(
     // Keep raw overlap scores intact; they are geometric overlap scores, not
     // calibrated probabilities. Use coarse IP geography only as a weak
     // district-level prior for GPS results, never as the sole location source.
-    if (method === "gps" && matches.length > 1) {
+    if ((method === "gps" || method === "network") && matches.length > 1) {
       const ipPrior = await getIpDistrictPrior(req, supabase);
       if (ipPrior.size > 0) {
         matches = rankVillageCandidates(matches, ipPrior);
@@ -142,21 +166,22 @@ export async function POST(
     // --- Point in overlap flag (informational, still success) ---
     const isOverlap = matches.length > 1 && matches[1].confidence > 5;
 
-    // Build hierarchy from the top match
-    const hierarchy = await buildHierarchy(supabase, matches[0]);
-
-    // Fetch active leaders for the relevant scopes (phones masked)
-    const scopeCodes = collectScopeCodes(hierarchy, matches);
-    const leaders = await fetchLeadersMasked(supabase, scopeCodes);
-
+    // Aggregate village intersection shares up the official NISR hierarchy.
+    // Scores describe overlap with the uncertainty circle, not calibrated odds.
+    const hierarchySummary = await buildHierarchicalSummary(supabase, realRows);
     const isNearestEstimate = matches[0].intersection_area_m2 === 0;
     const response: LocateSuccess = {
       status: "success",
-      matches,
-      hierarchy,
-      leaders,
+      matches: matches.slice(0, 3),
+      hierarchy: hierarchySummary.hierarchy,
+      hierarchyCandidates: hierarchySummary.candidates,
+      leaders: [],
       source: isNearestEstimate ? "nearest" : method,
+      accuracy_m: accuracy,
     };
+    if (method === "ip" && !isNearestEstimate) {
+      response.warning = "IP_NETWORK_LOCATION_COARSE_NOT_DEVICE_GPS";
+    }
 
     if (isNearestEstimate) {
       (response as LocateSuccess & { warning?: string }).warning =
@@ -181,6 +206,154 @@ export async function POST(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+async function respondWithCountryOnlyPrior(
+  hasRwandaIpCountry: boolean
+): Promise<NextResponse<LocateResponse>> {
+  let provinceRows: Array<{
+    scope_code: string;
+    name_kiny: string;
+    name_eng: string | null;
+    level: string;
+  }> = [];
+  let countryName = hasRwandaIpCountry ? "Rwanda" : "Intara z'u Rwanda (igereranya ridafite ikimenyetso)";
+
+  if (isSupabasePublicConfigured()) {
+    try {
+      const supabase = createSupabasePublicClient();
+      const [provinceResult, countryResult] = await Promise.all([
+        supabase.from("boundaries")
+          .select("scope_code, name_kiny, name_eng, level")
+          .eq("level", "province")
+          .is("valid_to", null)
+          .order("scope_code", { ascending: true }),
+        supabase.from("boundaries")
+          .select("scope_code, name_kiny, name_eng, level")
+          .eq("level", "country")
+          .is("valid_to", null)
+          .maybeSingle(),
+      ]);
+      provinceRows = provinceResult.data ?? [];
+      countryName = countryResult.data?.name_kiny ?? countryName;
+    } catch (error) {
+      console.warn("[locate] country-only prior lookup failed:", error);
+    }
+  }
+
+  if (provinceRows.length === 0) {
+    provinceRows = getStaticLocationChoices()
+      .filter((choice) => choice.level === "province")
+      .map((choice) => ({
+        scope_code: choice.scope_code,
+        name_kiny: choice.name_kiny,
+        name_eng: choice.name_eng,
+        level: choice.level,
+      }));
+  }
+
+  const share = provinceRows.length > 0 ? 100 / provinceRows.length : 0;
+  const provinces: ConfidenceMatch[] = provinceRows.map((row) => ({
+    scope_code: row.scope_code,
+    name_kiny: row.name_kiny,
+    name_eng: row.name_eng,
+    level: "province",
+    confidence: Math.round(share * 100) / 100,
+    intersection_area_m2: 0,
+  }));
+  const country: ConfidenceMatch = {
+    scope_code: "RW",
+    name_kiny: countryName,
+    name_eng: "Rwanda",
+    level: "country",
+    confidence: hasRwandaIpCountry ? 100 : 0,
+    intersection_area_m2: 0,
+  };
+
+  const response: LocateSuccess = {
+    status: "success",
+    matches: provinces,
+    hierarchy: {
+      country,
+      province: provinces[0],
+    },
+    hierarchyCandidates: {
+      province: provinces,
+    },
+    leaders: [],
+    source: "prior",
+    accuracy_m: 50_000,
+    warning: hasRwandaIpCountry
+      ? "COUNTRY_ONLY_UNINFORMATIVE_PROVINCE_PRIOR"
+      : "NO_DEVICE_LOCATION_SIGNAL_UNINFORMED_Rwanda_BASELINE",
+  };
+  return NextResponse.json(response);
+}
+
+async function buildHierarchicalSummary(
+  supabase: ReturnType<typeof createSupabasePublicClient>,
+  villageRows: RpcRow[]
+): Promise<{
+  hierarchy: LocateSuccess["hierarchy"];
+  candidates: LocateSuccess["hierarchyCandidates"];
+}> {
+  const villageMatches: ConfidenceMatch[] = villageRows.map((row) => ({
+    scope_code: row.scope_code,
+    name_kiny: row.name_kiny,
+    name_eng: row.name_eng,
+    level: "village",
+    confidence: Number(row.confidence),
+    intersection_area_m2: Number(row.intersection_area_m2),
+  }));
+  const aggregates = aggregateLocationHierarchy(villageMatches);
+  const aggregateEntries = Object.values(aggregates).flatMap((items) => items ?? []);
+  const scopeCodes = Array.from(new Set(aggregateEntries.map((item) => item.scope_code)));
+
+  const { data } = scopeCodes.length > 0
+    ? await supabase.from("boundaries")
+        .select("scope_code, name_kiny, name_eng, level")
+        .in("scope_code", scopeCodes)
+        .is("valid_to", null)
+    : { data: [] as Array<{ scope_code: string; name_kiny: string; name_eng: string | null; level: string }> };
+
+  const byCode = new Map((data ?? []).map((row) => [row.scope_code, row]));
+  for (const item of getStaticLocationChoices()) {
+    if (!byCode.has(item.scope_code)) {
+      byCode.set(item.scope_code, {
+        scope_code: item.scope_code,
+        name_kiny: item.name_kiny,
+        name_eng: item.name_eng,
+        level: item.level,
+      });
+    }
+  }
+  const villageByCode = new Map(villageMatches.map((row) => [row.scope_code, row]));
+  const candidates: NonNullable<LocateSuccess["hierarchyCandidates"]> = {};
+  const hierarchy: LocateSuccess["hierarchy"] = {};
+
+  for (const level of ["province", "district", "sector", "cell", "village"] as const) {
+    const items = aggregates[level] ?? [];
+    const resolved = items.slice(0, 3).flatMap((item) => {
+      const meta = byCode.get(item.scope_code);
+      const village = villageByCode.get(item.scope_code);
+      const name = meta?.name_kiny ?? village?.name_kiny;
+      if (!name) return [];
+      return [{
+        scope_code: item.scope_code,
+        name_kiny: name,
+        name_eng: meta?.name_eng ?? village?.name_eng ?? null,
+        level,
+        confidence: item.confidence,
+        intersection_area_m2: item.intersection_area_m2,
+      } satisfies ConfidenceMatch];
+    });
+    if (resolved.length > 0) {
+      candidates[level] = resolved;
+      hierarchy[level] = resolved[0];
+    }
+  }
+
+  return { hierarchy, candidates };
+}
 
 async function buildHierarchy(
   supabase: ReturnType<typeof createSupabasePublicClient>,
