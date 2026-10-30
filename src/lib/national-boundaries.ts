@@ -502,7 +502,7 @@ export async function locateFromOfficialNationalBoundaries(
   rawMatches.sort((a, b) => b.confidence - a.confidence);
   const top = rawMatches[0];
 
-  const matches: ConfidenceMatch[] = rawMatches.slice(0, 3).map((item) =>
+  const allMatches: ConfidenceMatch[] = rawMatches.map((item) =>
     asMatch(
       item.codes.village,
       "village",
@@ -512,12 +512,13 @@ export async function locateFromOfficialNationalBoundaries(
     )
   );
 
-  const total = matches.reduce((sum, item) => sum + item.confidence, 0);
-  if (matches.length > 1 && total > 100) {
-    for (const item of matches) {
+  const total = allMatches.reduce((sum, item) => sum + item.confidence, 0);
+  if (allMatches.length > 1 && total > 100) {
+    for (const item of allMatches) {
       item.confidence = Math.round((item.confidence / total) * 10_000) / 100;
     }
   }
+  const matches = allMatches.slice(0, 3);
 
   const provinceNameEng = field(top.props, "province");
   const provinceNameKey = provinceNameEng.toLowerCase().replace(/\s+/g, " ").trim();
@@ -596,7 +597,7 @@ export async function locateFromOfficialNationalBoundaries(
     parentNames.set(item.codes.village, { name_kiny: item.name, name_eng: item.name, level: "village" });
   }
 
-  const aggregates = aggregateLocationHierarchy(matches);
+  const aggregates = aggregateLocationHierarchy(allMatches);
   const hierarchyCandidates: NonNullable<LocateSuccess["hierarchyCandidates"]> = {};
   const aggregatedHierarchy: LocateSuccess["hierarchy"] = {};
   for (const level of ["province", "district", "sector", "cell", "village"] as const) {
