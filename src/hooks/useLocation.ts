@@ -6,6 +6,7 @@ import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
 import { calculateConfidenceOffline } from "@/lib/turf-logic";
 import type { OfflineBoundaryCollection } from "@/lib/turf-logic";
+import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
 
 export type LocationStatus =
   | "idle"
@@ -508,6 +509,37 @@ async function runOfflineConfidence(
   longitude: number,
   accuracy: number
 ): Promise<LocateResponse> {
+  const representativeFallback = async (): Promise<LocateResponse> => {
+    try {
+      // The compact hierarchy index includes official representative points
+      // and is precached by the Service Worker. It allows an explicitly
+      // estimated village even when offline polygon data is not installed.
+      const response = await fetch("/offline/location-index.json", {
+        cache: "force-cache",
+      });
+      if (response.ok) {
+        const estimate = nearestVillageEstimateFromIndex(
+          await response.json(),
+          latitude,
+          longitude,
+          accuracy,
+          "OFFLINE_REPRESENTATIVE_POINT_ESTIMATE"
+        );
+        if (estimate) return estimate;
+      }
+    } catch {
+      // Fall through to the honest OFFLINE_CACHE error if even the index is absent.
+    }
+    return {
+      status: "error",
+      code: "OFFLINE_CACHE",
+      message_kiny:
+        "Uri offline kandi urutonde rw'ahantu ntirwabitswe. Ongera uhuze interineti cyangwa uhitemo aho uzi ku rutonde.",
+      message_eng:
+        "You are offline and the location index is not cached. Reconnect or use a saved place list.",
+    };
+  };
+
   try {
     let response: Response | undefined;
     if (typeof caches !== "undefined") {
@@ -525,31 +557,17 @@ async function runOfflineConfidence(
         // Fetch failed
       }
     }
-    if (!response || !response.ok) {
-      return {
-        status: "error",
-        code: "OFFLINE_CACHE",
-        message_kiny:
-          "Uri offline kandi nta makuru yabitswe. Ongera uhuze interineti.",
-        message_eng:
-          "You are offline and no cached data is available. Please reconnect.",
-      };
-    }
+    if (!response || !response.ok) return representativeFallback();
+
     const geojson = (await response.json()) as OfflineBoundaryCollection;
-    return calculateConfidenceOffline(
+    const polygonResult = calculateConfidenceOffline(
       latitude,
       longitude,
       accuracy,
       geojson
     );
+    return polygonResult.status === "success" ? polygonResult : representativeFallback();
   } catch {
-    return {
-      status: "error",
-      code: "OFFLINE_CACHE",
-      message_kiny:
-        "Uri offline kandi nta makuru yabitswe. Ongera uhuze interineti.",
-      message_eng:
-        "You are offline and no cached data is available. Please reconnect.",
-    };
+    return representativeFallback();
   }
 }
