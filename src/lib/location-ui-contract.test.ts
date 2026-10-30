@@ -50,3 +50,10 @@ test("no 150 m hard accuracy rejection remains in the automatic location flow", 
   assert.doesNotMatch(api, /accuracy\s*>\s*150/);
   assert.doesNotMatch(api, /GPS_ACCURACY_TOO_LOW/);
 });
+
+test("unexpected locate-route failures fall back instead of returning a dead-end HTTP 502", () => {
+  assert.match(api, /fallbackCoordinates/);
+  assert.match(api, /respondWithOfficialFallback\([\s\S]*?fallbackCoordinates\.latitude/);
+  assert.match(api, /createRwandaProvincePrior\(false\), \{ status: 200 \}/);
+  assert.doesNotMatch(api, /\{ status: 502 \}/);
+});
