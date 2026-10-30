@@ -7,7 +7,7 @@ import type { LeaderPublic } from "@/types/leader";
 import { calculateConfidenceOffline } from "@/lib/turf-logic";
 import type { OfflineBoundaryCollection } from "@/lib/turf-logic";
 import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
-import { createRwandaProvincePrior } from "@/lib/location-prior";
+import { createLastConfirmedVillagePrior, createRwandaProvincePrior } from "@/lib/location-prior";
 
 export type LocationStatus =
   | "idle"
@@ -118,16 +118,55 @@ export function useLocation() {
       setState((current) => ({ ...current, noticeKiny: notice }));
     };
 
-    const showRwandaPrior = (notice: string) => {
+    const showRwandaPrior = async (notice: string) => {
+      if (controller.signal.aborted || firstAnswerResolved) return;
+      let prior: LocateSuccess = createRwandaProvincePrior(false);
+      let priorNotice = notice;
+
+      // A village the citizen explicitly confirmed before is a better fallback
+      // than an equal-province prior, but its weight decays with age and it is
+      // never described as the current GPS position.
+      try {
+        const savedRaw = localStorage.getItem("iwacu-confirmed-village");
+        if (savedRaw) {
+          const saved = JSON.parse(savedRaw) as { scope_code?: string; confirmed_at?: string };
+          const confirmedAt = saved.confirmed_at ? Date.parse(saved.confirmed_at) : Number.NaN;
+          const ageMs = Date.now() - confirmedAt;
+          if (saved.scope_code && Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= 30 * 24 * 60 * 60 * 1000) {
+            const indexController = new AbortController();
+            const timeout = setTimeout(() => indexController.abort(), 1_200);
+            try {
+              const response = await fetch("/offline/location-index.json", {
+                cache: "force-cache",
+                signal: indexController.signal,
+              });
+              if (response.ok) {
+                const index = await response.json();
+                const confirmedPrior = createLastConfirmedVillagePrior(index, saved.scope_code, ageMs);
+                if (confirmedPrior) {
+                  prior = confirmedPrior;
+                  const ageDays = Math.max(0, Math.floor(ageMs / (24 * 60 * 60 * 1000)));
+                  priorNotice = `Nta kimenyetso gishya kiraboneka. Iri gereranya rishingiye ku mudugudu wari wemeje hashize iminsi ${ageDays}; si gihamya y'aho uri ubu.`;
+                }
+              }
+            } finally {
+              clearTimeout(timeout);
+            }
+          }
+        }
+      } catch {
+        // The national prior remains available if local storage/index is absent.
+      }
+
       if (controller.signal.aborted || firstAnswerResolved) return;
       setState({
         status: "success",
-        data: createRwandaProvincePrior(false),
+        data: prior,
         errorCode: null,
         errorMessageKiny: null,
         errorMessageEng: null,
         isOffline: !online,
-        noticeKiny: notice,
+        noticeKiny: priorNotice,
       });
       signalFirstAnswer();
     };
@@ -271,7 +310,7 @@ export function useLocation() {
         new Promise<void>((resolve) => setTimeout(resolve, 4_000)),
       ]);
       if (!firstAnswerResolved && !controller.signal.aborted) {
-        showRwandaPrior("Nta coordinates telefone yashoboye gutanga. Izi ntara ni prior ingana gusa, si aho uri hapimwe.");
+        await showRwandaPrior("Nta coordinates telefone yashoboye gutanga. Iyi ni prior y'ahantu haboneka, si aho uri hapimwe.");
       }
       return;
     }
@@ -326,7 +365,7 @@ export function useLocation() {
     ]);
 
     if (!firstAnswerResolved && !controller.signal.aborted) {
-      showRwandaPrior("Nta coordinates ziraboneka. Turacyategereje GPS/network; mu gihe gito, intara zigaragara ni amahitamo angana gusa, si amahirwe apimwe.");
+      await showRwandaPrior("Nta coordinates ziraboneka. Turacyategereje GPS/network; turerekana amakuru y'ahantu yari yemejwe mbere cyangwa prior rusange.");
     }
   }, [stopLocationWatch]);
 
