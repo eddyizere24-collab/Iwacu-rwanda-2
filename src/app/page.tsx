@@ -147,10 +147,17 @@ export default function HomePage() {
             <LocationButton status={status} onClick={handleLocateClick} />
           </div>
           <div className="mx-auto mt-6 max-w-2xl space-y-4">
-            <VillagePicker onSelect={chooseVillage} />
             <MapPinPicker onSelect={(latitude, longitude, accuracy) => {
               void locateAtCoordinate(latitude, longitude, accuracy);
             }} />
+            <details className="rounded-2xl border border-border bg-card p-3 text-left">
+              <summary className="cursor-pointer min-h-[42px] py-2 text-sm font-semibold">
+                Si hano? Hindura (gukosora aho hantu)
+              </summary>
+              <div className="mt-3">
+                <VillagePicker onSelect={chooseVillage} />
+              </div>
+            </details>
           </div>
 
           {/* NCSA Law compliance note */}
@@ -369,7 +376,7 @@ export default function HomePage() {
                         ))}
                       </div>
                     ) : (
-                      <span className="mt-1 block text-xs text-muted-foreground">Nta gipimo gihagije kuri uru rwego.</span>
+                      <span className="mt-1 block text-xs text-muted-foreground">Nta makuru ahagije kuri uru rwego; reba urwego ruri hejuru. Igereranya riravugururwa uko ibimenyetso biboneka.</span>
                     )}
                   </div>
                 );
