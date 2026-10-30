@@ -17,3 +17,13 @@ test("marks the country only when the IP country signal says Rwanda", () => {
   assert.equal(answer.hierarchy.country?.confidence, 100);
   assert.match(answer.warning ?? "", /COUNTRY_ONLY/);
 });
+
+test("permission-denied, no-network and IP-without-coordinates still have a non-empty service-area answer", () => {
+  for (const signalCase of ["permission-denied", "no-network", "ip-without-coordinates", "no-cached-fix"]) {
+    const answer = createRwandaProvincePrior(false);
+    assert.equal(answer.status, "success", signalCase);
+    assert.equal(answer.source, "prior", signalCase);
+    assert.equal(answer.hierarchyCandidates?.province?.length, 5, signalCase);
+    assert.ok(answer.matches.length > 0, signalCase);
+  }
+});
