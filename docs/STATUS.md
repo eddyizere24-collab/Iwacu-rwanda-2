@@ -60,3 +60,52 @@ No new `/api/locate` HTTP POST run was executed against PR #3 code head. The lat
 1. Finish and verify Actions for the exact PR #3 head, then add route-level tests that fail CI for every required no-empty-result scenario and run hierarchical hit-rate/calibration tests on a larger border/Kivu/gap dataset.
 2. Test the picker runtime for all five provinces, at least five districts, and offline after one online load; confirm the result UI selects the finest supported level without presenting raw scores as calibrated probabilities.
 3. After Vercel connector access and build quota are resolved, test the exact candidate Preview via `/api/locate`, inspect matching Supabase API logs, and provide the owner the tap-only indoor test. Keep PR #3 unmerged and Production unchanged until every T1 gate passes.
+
+
+## WORK ORDER 03 — P1 implementation update (2026-10-30)
+
+### Current change-set
+
+- Code commit created: `85b35b60ad40c644e45909e6b7aa3e5207eff8d7`.
+- Parent: `954fde86aece288312e7946fe509eea5178a0021`.
+- 21 files changed in one code commit.
+- The commit object is in GitHub, but the branch ref has not been advanced. The earlier owner instruction to avoid Vercel builds until the rolling daily quota resets is still active. Advancing this PR branch can automatically request a Vercel build. No Vercel build, preview, deploy, or test was requested.
+- PR #3 remains open and unmerged. Production is unchanged.
+
+### Work-order table
+
+| W# | status | commit SHA | file / implementation | run URL | raw result |
+|---|---|---|---|---|---|
+| W03-P1a | PARTIAL | `85b35b60ad40c644e45909e6b7aa3e5207eff8d7` | `src/hooks/useLocation.ts` | Not run; branch ref held | coarse network maximumAge 60,000 ms; first-answer fallback timer 3,000 ms; last-confirmed place lookup starts at t=0; GPS/network continues refining |
+| W03-P1b | PARTIAL | `85b35b60ad40c644e45909e6b7aa3e5207eff8d7` | `src/app/api/locate/route.ts`, `src/types/location.ts` | Not run | configurable classifier RPC runs before village lookup; outside response includes distance; <=5,000 m border-zone response is district/province only; no village candidate; dataset and signal contract added |
+| W03-P1c | DONE-IN-CODE | `85b35b60ad40c644e45909e6b7aa3e5207eff8d7` | `src/app/api/administrative-units/route.ts`, `src/components/VillagePicker.tsx` | Not run | database-only level + parent_id picker; Country excluded by level filter; five provinces queried from DB; breadcrumb path; localStorage v4 cache; no NISR fetch or /api/locate lookup inside picker |
+| W03-P1d | DONE-IN-CODE | `85b35b60ad40c644e45909e6b7aa3e5207eff8d7` | `src/app/api/ai-router/route.ts` | Not run | POST calls only search_places; returns full_path and duplicate_count; empty results say no match; legacy NISR and leaders helpers remain but are not called |
+| W03-P1e | DONE-IN-CODE | `85b35b60ad40c644e45909e6b7aa3e5207eff8d7` | `src/lib/feature-flags.ts`, `src/lib/feature-flags.test.ts`, `src/app/api/location-context/route.ts`, `src/components/NearbyLandmarks.tsx`, `src/app/page.tsx` | Not run | NEXT_PUBLIC_FEATURE_LANDMARKS defaults OFF; server responds status=disabled; unit test asserts zero requests when OFF |
+| W03-P1f | PARTIAL | `85b35b60ad40c644e45909e6b7aa3e5207eff8d7` | `src/app/api/location-map/route.ts`, `src/components/MapPinPicker.tsx` | Not run | map overlay uses get_location_map_overlay RPC, bbox validation, 300-feature cap, Turf simplification; scope_code is kept identical to locate; existing map tap calls locateAtCoordinate -> POST /api/locate |
+| W03-P1g | DONE-IN-CODE | `85b35b60ad40c644e45909e6b7aa3e5207eff8d7` | `src/components/LocationReportButton.tsx`, `docs/PHONE-TEST-W4.md` | Not run | copyable JSON report; 10 tap-only phone steps |
+| W03-P1h | DONE-IN-CODE | `85b35b60ad40c644e45909e6b7aa3e5207eff8d7` | `scripts/check-no-accuracy-rejection.sh`, `scripts/accuracy-rejection-allowlist.txt`, `docs/ACCURACY-REJECTION-ALLOWLIST.md`, workflow, package.json | Not run | exact grep gate added; allow-list empty; CI step added before typecheck/build |
+
+### P1 evidence and verification status
+
+- 21 blobs were assembled into one atomic code commit. This is a Git commit SHA, not just a report or blob SHA.
+- No GitHub Actions run URL exists yet because the commit has not been pushed to the PR branch. No test result is claimed.
+- No SQL or Supabase mutation was made. Existing search_places and cell_places were not changed. No database migration was applied.
+- No secret values were accessed or printed.
+- Remaining verification: TypeScript/build, unit tests including flag-OFF test, outside / border-zone route tests, picker five-province and offline tests, AI search RPC integration, map geometry response and ID equality tests, then phone test.
+
+### P2 — GitHub Actions secrets needed
+
+The runner will start the app locally; tests will call the public read-only PostGIS functions through the same Supabase public client used by the route. No service-role key is needed for the planned P2 read-only matrix.
+
+Create these two **Repository secrets** before P2:
+1. `NEXT_PUBLIC_SUPABASE_URL`
+2. `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+On Android GitHub website: open repository → Settings → Secrets and variables → Actions → New repository secret. Enter the first exact name and its value from the IWACU Supabase project API settings; save. Repeat for the second exact name and the public anon/publishable-compatible key used by the app. Do not post either value in chat, an issue, or a commit. P2 will stop safely if either secret is missing. `RWANDA_CLASSIFIER_RPC` and `RWANDA_BOUNDARY_DATASET_VERSION` are non-secret variables and are not needed to be secrets.
+
+### Closed items carried forward
+
+- Rollback deployment `dpl_EqeT3pbQHustzJstX9rhAibo1D3z`: READY on `3baf94c`; closed, do not reopen.
+- `cell_places`: untouched; do not delete.
+- `search_places` DB behaviour: unchanged.
+- No `MAX_ACCURACY` policy or constant added.
