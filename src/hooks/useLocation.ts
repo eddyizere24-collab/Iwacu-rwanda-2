@@ -40,8 +40,6 @@ const INITIAL: UseLocationState = {
 };
 
 const GPS_TIMEOUT_MS = 15_000;
-// High-uncertainty prior replacement threshold; it does not reject any measured location.
-const LOW_INFORMATION_RADIUS_METERS = 45_000;
 const LAST_FIX_KEY = "iwacu-last-location-fix";
 
 export function useLocation() {
@@ -83,8 +81,11 @@ export function useLocation() {
     setState({ ...INITIAL, status: "requesting_gps" });
 
     const online = typeof navigator !== "undefined" && navigator.onLine !== false;
+    // Only measured device fixes participate in best-fix ranking. IP and
+    // confirmed-place priors are display fallbacks, never accuracy cut-offs.
     let bestAccuracy = Number.POSITIVE_INFINITY;
     let bestHasCoordinates = false;
+    let hasMeasuredFix = false;
     let firstAnswerResolved = false;
     let resolveFirstAnswer: (() => void) | null = null;
     const firstAnswer = new Promise<void>((resolve) => { resolveFirstAnswer = resolve; });
@@ -94,11 +95,25 @@ export function useLocation() {
       resolveFirstAnswer?.();
     };
 
-    const showSuccess = (json: LocateSuccess, reportedRadiusMeters: number, fixAgeMs: number, notice?: string, point?: { latitude: number; longitude: number }) => {
+    const showSuccess = (
+      json: LocateSuccess,
+      reportedRadiusMeters: number,
+      fixAgeMs: number,
+      notice?: string,
+      point?: { latitude: number; longitude: number },
+      trackAsBestFix = true
+    ) => {
       const hasCoordinates = Boolean(point || (Number.isFinite(json.latitude) && Number.isFinite(json.longitude)));
-      if (controller.signal.aborted || reportedRadiusMeters > bestAccuracy || (reportedRadiusMeters === bestAccuracy && bestHasCoordinates && !hasCoordinates)) return;
-      bestAccuracy = reportedRadiusMeters;
-      bestHasCoordinates = hasCoordinates;
+      if (controller.signal.aborted || (!trackAsBestFix && hasMeasuredFix)) return;
+      if (
+        trackAsBestFix &&
+        (reportedRadiusMeters > bestAccuracy ||
+          (reportedRadiusMeters === bestAccuracy && bestHasCoordinates && !hasCoordinates))
+      ) return;
+      if (trackAsBestFix) {
+        bestAccuracy = reportedRadiusMeters;
+        bestHasCoordinates = hasCoordinates;
+      }
       setState({
         status: "success",
         data: {
@@ -175,15 +190,17 @@ export function useLocation() {
       }
     })().then((value) => {
       lastConfirmedPrior = value;
-      // A measured GPS/network fix always outranks this recency prior. The
-      // cached prior may replace only an uninformative IP/service-area prior.
-      if (value && !controller.signal.aborted && bestAccuracy >= LOW_INFORMATION_RADIUS_METERS) {
+      // This is a display-only fallback. A device fix, at ANY reported
+      // accuracy, always takes priority and is never blocked by this prior.
+      if (value && !controller.signal.aborted && !hasMeasuredFix) {
         const ageDays = Math.max(0, Math.floor(value.ageMs / (24 * 60 * 60 * 1000)));
         showSuccess(
           value.data,
           45_000,
           value.ageMs,
-          "Nta kimenyetso gishya kiraboneka. Iri gereranya rishingiye ku mudugudu wari wemeje hashize iminsi " + ageDays + "; si gihamya y'aho uri ubu."
+          "Nta kimenyetso gishya kiraboneka. Iri gereranya rishingiye ku mudugudu wari wemeje hashize iminsi " + ageDays + "; si gihamya y'aho uri ubu.",
+          undefined,
+          false
         );
       }
       return value;
@@ -221,10 +238,13 @@ export function useLocation() {
       const fixAgeMs = Math.max(0, Date.now() - timestamp);
       const reportedRadiusMeters = Math.min(
         50_000,
-        Math.max(1, Number.isFinite(rawAccuracy) ? rawAccuracy : 50_000) +
+        Math.max(0, Number.isFinite(rawAccuracy) ? rawAccuracy : 50_000) +
           (fixAgeMs / 1000) * (kind === "last-known" ? 20 : 5)
       );
-      if (reportedRadiusMeters >= bestAccuracy) return;
+      // Equal and very large reported radii are still valid observations.
+      // Only a strictly better measured fix may supersede an existing one.
+      if (reportedRadiusMeters > bestAccuracy) return;
+      hasMeasuredFix = true;
 
       lastFixRef.current = {
         latitude,
@@ -317,7 +337,9 @@ export function useLocation() {
             json,
             json.accuracy_m ?? 50_000,
             0,
-            "Iri ni igereranya rishingiye ku muyoboro wa interineti, si GPS nyayo."
+            "Iri ni igereranya rishingiye ku muyoboro wa interineti, si GPS nyayo.",
+            undefined,
+            false
           );
         }
       } catch {

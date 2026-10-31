@@ -29,8 +29,8 @@ const DATASET_VERSION = process.env.RWANDA_BOUNDARY_DATASET_VERSION || "nisr-202
 const LocateBodySchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  // Accept any finite positive GPS radius; downstream PostGIS/NISR work is capped safely.
-  accuracy: z.number().finite().positive(),
+  // Zero is valid for an exact/no-noise test point; large radii widen uncertainty.
+  accuracy: z.number().finite().nonnegative(),
   method: z.enum(["gps", "map", "network", "ip"]).optional().default("gps"),
 });
 

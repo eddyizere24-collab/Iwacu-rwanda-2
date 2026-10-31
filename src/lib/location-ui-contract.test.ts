@@ -79,7 +79,7 @@ test("map overlay uses database geometry and canonical village scope IDs", () =>
 test("accuracy-rejection guard has an npm command and a CI step", () => {
   const checker = readFileSync(new URL("../../scripts/check-no-accuracy-rejection.mjs", import.meta.url), "utf8");
   assert.ok(checker.includes("MAX_" + "ACCURACY"));
-  assert.ok(checker.includes("fixed numeric accuracy rejection is forbidden"));
+  assert.ok(checker.includes("fixed numeric accuracy/radius comparison is forbidden"));
   assert.ok(packageJson.includes('"check:no-accuracy-rejection": "node scripts/check-no-accuracy-rejection.mjs"'));
   assert.ok(workflow.includes("Accuracy rejection JavaScript guard"));
   assert.ok(workflow.includes("npm run check:no-accuracy-rejection"));
@@ -98,4 +98,20 @@ test("copyable phone report contains percentages, timings and commit SHA", () =>
   assert.ok(report.includes("timings_ms:"));
   assert.ok(report.includes("commit_sha:"));
   assert.ok(report.includes("score_note:"));
+});
+
+test("zero-metre accuracy is accepted and large measured radii are not gated by 45km", () => {
+  assert.ok(api.includes("accuracy: z.number().finite().nonnegative()"));
+  assert.ok(hook.includes("Math.max(0, Number.isFinite(rawAccuracy)"));
+  assert.doesNotMatch(hook, /LOW_INFORMATION_RADIUS_METERS/);
+  assert.ok(hook.includes("hasMeasuredFix"));
+  assert.ok(hook.includes("trackAsBestFix = true"));
+  assert.ok(hook.includes("if (value && !controller.signal.aborted && !hasMeasuredFix)"));
+});
+
+test("accuracy guard flags named constants and documents the precise UI-only allow-list", () => {
+  const checker = readFileSync(new URL("../../scripts/check-no-accuracy-rejection.mjs", import.meta.url), "utf8");
+  assert.ok(checker.includes("namedConstantAccuracyGuard"));
+  assert.ok(checker.includes("NAMED_GUARD_ALLOWLIST"));
+  assert.ok(checker.includes("notice text only; no fix rejection or request suppression"));
 });

@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [fix/never-fail-location-engine]
+    branches: [wip/p2-tests]
 
 permissions:
   contents: read
@@ -20,7 +20,6 @@ jobs:
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-public-key
-      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
     steps:
       - name: Check out source
         uses: actions/checkout@v4

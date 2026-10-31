@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 /**
- * Static guard against rejecting citizens because a numeric GPS accuracy
- * exceeds a fixed threshold.
+ * Static guard against rejecting citizens because GPS accuracy is large.
  *
- * Documented allow-list:
- * - src/hooks/useLocation.ts, around lines 96 and 188: the best-fix comparisons
- *   effectiveAccuracy > bestAccuracy / effectiveAccuracy >= bestAccuracy are
- *   allowed. They compare two measured fixes to keep the better one; they do
- *   not reject a fix against a hard-coded metre limit.
+ * Allow-list (non-rejection UI only):
+ * - src/hooks/useLocation.ts: reportedRadiusMeters > 2_000 is used only
+ *   to choose an explanatory "approximate" notice; it does not discard a fix.
+ * All other numeric or named-constant accuracy/radius comparisons fail.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
@@ -15,8 +13,22 @@ import { extname, join, relative } from "node:path";
 const root = process.cwd();
 const sourceRoot = join(root, "src");
 const extensions = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
-const forbiddenNumericGuard = /\baccuracy\s*(?:>=|>)\s*\d+(?:\.\d+)?\b/i;
+const numericAccuracyGuard = /(?:\b[A-Za-z_$][\w$]*(?:accuracy|radius)[\w$]*\s*(?:>=|>|<=|<)\s*\d[\d_]*(?:\.\d+)?\b|\b\d[\d_]*(?:\.\d+)?\s*(?:>=|>|<=|<)\s*[A-Za-z_$][\w$]*(?:accuracy|radius)[\w$]*\b)/i;
+const namedConstantAccuracyGuard = /(?:\b[A-Za-z_$][\w$]*(?:accuracy|radius)[\w$]*\s*(?:>=|>|<=|<)\s*[A-Z][A-Z0-9_]*\b|\b[A-Z][A-Z0-9_]*\s*(?:>=|>|<=|<)\s*[A-Za-z_$][\w$]*(?:accuracy|radius)[\w$]*\b)/;
+const NAMED_GUARD_ALLOWLIST = [
+  {
+    file: "src/hooks/useLocation.ts",
+    linePattern: /reportedRadiusMeters\s*>\s*2_000/,
+    reason: "notice text only; no fix rejection or request suppression",
+  },
+];
 const failures = [];
+
+function isAllowlisted(file, line) {
+  return NAMED_GUARD_ALLOWLIST.some((entry) =>
+    entry.file === file && entry.linePattern.test(line) && Boolean(entry.reason)
+  );
+}
 
 function walk(directory) {
   for (const entry of readdirSync(directory)) {
@@ -28,11 +40,15 @@ function walk(directory) {
       const file = relative(root, filePath).replaceAll("\\", "/");
       const lines = readFileSync(filePath, "utf8").split(/\r?\n/);
       lines.forEach((line, index) => {
+        const location = file + ":" + (index + 1);
         if (/\bMAX_ACCURACY\b/.test(line)) {
-          failures.push(file + ":" + (index + 1) + ": MAX_ACCURACY is forbidden");
+          failures.push(location + ": MAX_ACCURACY is forbidden");
         }
-        if (forbiddenNumericGuard.test(line)) {
-          failures.push(file + ":" + (index + 1) + ": fixed numeric accuracy rejection is forbidden");
+        if (numericAccuracyGuard.test(line) && !isAllowlisted(file, line)) {
+          failures.push(location + ": fixed numeric accuracy/radius comparison is forbidden");
+        }
+        if (namedConstantAccuracyGuard.test(line) && !isAllowlisted(file, line)) {
+          failures.push(location + ": named-constant accuracy/radius comparison is forbidden");
         }
       });
     }
@@ -50,4 +66,4 @@ if (failures.length) {
   console.error(failures.join("\n"));
   process.exit(1);
 }
-console.log("PASS: src contains no MAX_ACCURACY or fixed numeric accuracy rejection guard.");
+console.log("PASS: no fixed numeric or named-constant accuracy/radius rejection comparisons found.");
