@@ -24,7 +24,7 @@ import type { LocateResponse, LocateSuccess } from "@/types/location";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const CLASSIFIER_RPC = process.env.RWANDA_CLASSIFIER_RPC?.trim() || "classify_rwanda_coordinate";
+const CLASSIFIER_RPC = "classify_rwanda_coordinate_v2";
 const DATASET_VERSION = process.env.RWANDA_BOUNDARY_DATASET_VERSION || "nisr-2022-db-v1";
 
 const LocateBodySchema = z.object({
@@ -183,7 +183,11 @@ export async function POST(
       const borderDistance = coordinateClassification.distance_to_border_m == null
         ? Number.NaN
         : Number(coordinateClassification.distance_to_border_m);
-      if (Number.isFinite(borderDistance) && borderDistance <= 5_000) {
+      if (
+        Number.isFinite(borderDistance) &&
+        borderDistance <= 5_000 &&
+        coordinateClassification.nearest_border_district_code
+      ) {
         return await respondWithBorderZone(
           supabase,
           coordinateClassification.nearest_border_district_code,
@@ -305,7 +309,12 @@ export async function POST(
     console.error("[locate] Unexpected error; returning a best available location fallback:", err);
     if (coordinateClassification && !coordinateClassification.is_inside_rwanda) {
       const distance = coordinateClassification.distance_to_border_m == null ? Number.NaN : Number(coordinateClassification.distance_to_border_m);
-      if (Number.isFinite(distance) && distance <= 5_000 && isSupabasePublicConfigured()) {
+      if (
+        Number.isFinite(distance) &&
+        distance <= 5_000 &&
+        coordinateClassification.nearest_border_district_code &&
+        isSupabasePublicConfigured()
+      ) {
         try {
           return await respondWithBorderZone(
             createSupabasePublicClient(),

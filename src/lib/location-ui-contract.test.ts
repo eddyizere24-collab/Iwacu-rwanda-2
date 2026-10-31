@@ -48,9 +48,10 @@ test("landmarks feature is OFF by default and does not render or request when di
   assert.ok(contextRoute.includes("{ disabled: true, status: \"disabled\""));
 });
 
-test("location route classifies the Rwanda border before village scoring", () => {
-  assert.ok(api.includes('"classify_rwanda_coordinate"'));
+test("location route classifies the Rwanda border with the private v2 classifier before village scoring", () => {
+  assert.ok(api.includes('const CLASSIFIER_RPC = "classify_rwanda_coordinate_v2";'));
   assert.ok(api.indexOf("supabase.rpc(CLASSIFIER_RPC") < api.indexOf('"calculate_location_confidence"'));
+  assert.ok(api.includes("coordinateClassification.nearest_border_district_code"));
   assert.ok(api.includes("outside_rwanda: true"));
   assert.ok(api.includes('flags: ["border_zone"]'));
   assert.ok(api.includes("top3_villages: []"));
