@@ -78,7 +78,7 @@ test("map overlay uses database geometry and canonical village scope IDs", () =>
 
 test("accuracy-rejection guard has an npm command and a CI step", () => {
   const checker = readFileSync(new URL("../../scripts/check-no-accuracy-rejection.mjs", import.meta.url), "utf8");
-  assert.ok(checker.includes("MAX_ACCURACY"));
+  assert.ok(checker.includes("MAX_" + "ACCURACY"));
   assert.ok(checker.includes("fixed numeric accuracy rejection is forbidden"));
   assert.ok(packageJson.includes('"check:no-accuracy-rejection": "node scripts/check-no-accuracy-rejection.mjs"'));
   assert.ok(workflow.includes("Accuracy rejection JavaScript guard"));

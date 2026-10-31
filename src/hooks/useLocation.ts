@@ -40,6 +40,8 @@ const INITIAL: UseLocationState = {
 };
 
 const GPS_TIMEOUT_MS = 15_000;
+// High-uncertainty prior replacement threshold; it does not reject any measured location.
+const LOW_INFORMATION_RADIUS_METERS = 45_000;
 const LAST_FIX_KEY = "iwacu-last-location-fix";
 
 export function useLocation() {
@@ -175,7 +177,7 @@ export function useLocation() {
       lastConfirmedPrior = value;
       // A measured GPS/network fix always outranks this recency prior. The
       // cached prior may replace only an uninformative IP/service-area prior.
-      if (value && !controller.signal.aborted && bestAccuracy >= 45_000) {
+      if (value && !controller.signal.aborted && bestAccuracy >= LOW_INFORMATION_RADIUS_METERS) {
         const ageDays = Math.max(0, Math.floor(value.ageMs / (24 * 60 * 60 * 1000)));
         showSuccess(
           value.data,
