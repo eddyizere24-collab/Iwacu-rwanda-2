@@ -1,10 +1,10 @@
 {
   "status": "ERROR",
-  "generated_at": "2026-10-31T15:54:24.180Z",
+  "generated_at": "2026-10-31T15:57:04.939Z",
   "github": {
-    "run_id": "41217018495",
+    "run_id": "41217229021",
     "run_attempt": "1",
-    "sha": "4dc3618dedc3515e84acd3fbd1001de5db6256d3",
+    "sha": "f47faad37e3bfbaeffec8ab0757bc3e5783e8692",
     "ref": "refs/heads/wip/p2-tests"
   },
   "concurrency": {
