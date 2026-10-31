@@ -15,6 +15,7 @@ import { aggregateLocationHierarchy } from "@/lib/location-hierarchy";
 import { createRwandaProvincePrior } from "@/lib/location-prior";
 import { listOfficialNationalLocationIndex, locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
 import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
+import { classifyThenContinue } from "@/lib/classifier-flow";
 import offlineLocationIndex from "../../../../public/offline/location-index.json";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
@@ -34,6 +35,13 @@ const LocateBodySchema = z.object({
   method: z.enum(["gps", "map", "network", "ip"]).optional().default("gps"),
 });
 
+interface ClassifierRow {
+  is_inside_rwanda: boolean;
+  distance_to_border_m: number | null;
+  nearest_border_district: string | null;
+  nearest_border_district_code: string | null;
+}
+
 interface RpcRow {
   scope_code: string;
   name_kiny: string;
@@ -47,6 +55,8 @@ interface RpcRow {
 export async function POST(
   req: NextRequest
 ): Promise<NextResponse<LocateResponse>> {
+  let classifierUnavailable = false;
+  let classifierErrorCode: string | null = null;
   let coordinateClassification: {
     is_inside_rwanda: boolean;
     distance_to_border_m: number | null;
@@ -115,39 +125,64 @@ export async function POST(
     fallbackCoordinates = { latitude, longitude, accuracy, method };
 
     if (!isSupabasePublicConfigured()) {
-      // Without the database classifier, do not claim a current village.
-      const prior = withLocationResponseContract(createRwandaProvincePrior(false), [method]);
-      return NextResponse.json({
-        ...prior,
-        flags: ["rwanda_classifier_unavailable"],
-      }, { status: 200 });
+      classifierUnavailable = true;
+      classifierErrorCode = "NOT_CONFIGURED";
+      return respondWithOfficialFallback(
+        latitude, longitude, accuracy, method,
+        classifierFallbackFlags(classifierUnavailable, classifierErrorCode)
+      );
     }
 
     const supabase = createSupabasePublicClient();
 
-    // Classify the coordinate before any village polygon or NISR lookup.
-    const { data: classifierRows, error: classifierError } = await supabase.rpc(CLASSIFIER_RPC, {
-      p_lng: longitude,
-      p_lat: latitude,
-      p_buffer_m: 0,
-    });
-    if (classifierError || !Array.isArray(classifierRows) || classifierRows.length === 0) {
-      console.warn("[locate] Rwanda coordinate classifier unavailable:", classifierError?.message ?? "empty result");
-      const prior = withLocationResponseContract(createRwandaProvincePrior(false), [method]);
-      return NextResponse.json({
-        ...prior,
-        flags: ["rwanda_classifier_unavailable"],
-      }, { status: 200 });
-    }
+    // The country check is advisory: an RPC failure must still continue
+    // into the village search. Its SQLSTATE is surfaced in response flags.
+    const classifierFlow = await classifyThenContinue<ClassifierRow, {
+      data: RpcRow[] | null;
+      error: { code?: string | null; message?: string | null } | null;
+    } | null>(
+      async () => {
+        const { data, error } = await supabase.rpc(CLASSIFIER_RPC, {
+          p_lng: longitude,
+          p_lat: latitude,
+          p_buffer_m: 0,
+        });
+        return { data: data as ClassifierRow[] | null, error };
+      },
+      async (state) => {
+        if (state.classification && !state.classification.is_inside_rwanda) {
+          return null;
+        }
+        const { data, error } = await supabase.rpc(
+          "calculate_location_confidence",
+          {
+            p_lng: longitude,
+            p_lat: latitude,
+            p_accuracy_m: accuracy,
+          }
+        );
+        return { data: data as RpcRow[] | null, error };
+      },
+      (state) => {
+        // Retain the classifier error even if the subsequent village RPC throws.
+        coordinateClassification = state.classification;
+        classifierUnavailable = state.unavailable;
+        classifierErrorCode = state.errorCode;
+      }
+    );
 
-    coordinateClassification = classifierRows[0] as {
-      is_inside_rwanda: boolean;
-      distance_to_border_m: number | null;
-      nearest_border_district: string | null;
-      nearest_border_district_code: string | null;
-    };
-    if (!coordinateClassification.is_inside_rwanda) {
-      const borderDistance = coordinateClassification.distance_to_border_m == null ? Number.NaN : Number(coordinateClassification.distance_to_border_m);
+    coordinateClassification = classifierFlow.classification;
+    classifierUnavailable = classifierFlow.unavailable;
+    classifierErrorCode = classifierFlow.errorCode;
+    const classifierFlags = classifierFallbackFlags(
+      classifierUnavailable,
+      classifierErrorCode
+    );
+
+    if (coordinateClassification && !coordinateClassification.is_inside_rwanda) {
+      const borderDistance = coordinateClassification.distance_to_border_m == null
+        ? Number.NaN
+        : Number(coordinateClassification.distance_to_border_m);
       if (Number.isFinite(borderDistance) && borderDistance <= 5_000) {
         return await respondWithBorderZone(
           supabase,
@@ -163,19 +198,22 @@ export async function POST(
       }, { status: 200 });
     }
 
-    // --- Call PostGIS confidence function ---
-    const { data: rows, error: rpcError } = await supabase.rpc(
-      "calculate_location_confidence",
-      {
-        p_lng: longitude,
-        p_lat: latitude,
-        p_accuracy_m: accuracy,
-      }
-    );
+    const locationQuery = classifierFlow.result;
+    if (!locationQuery) {
+      return respondWithOfficialFallback(
+        latitude, longitude, accuracy, method, classifierFlags
+      );
+    }
+    const { data: rows, error: rpcError } = locationQuery;
 
     if (rpcError) {
-      console.warn("[locate] PostGIS RPC failed; trying the official NISR boundary service:", rpcError.message);
-      return respondWithOfficialFallback(latitude, longitude, accuracy, method);
+      console.warn(
+        "[locate] PostGIS RPC failed; trying the official NISR boundary service:",
+        rpcError.message ?? rpcError.code ?? "unknown_error"
+      );
+      return respondWithOfficialFallback(
+        latitude, longitude, accuracy, method, classifierFlags
+      );
     }
 
     // Ignore an old sample polygon if it remains in a database that has
@@ -200,7 +238,7 @@ export async function POST(
     if (matches.length === 0) {
       // A valid national match may still exist when the database has not yet
       // been imported or contains only partial district coverage.
-      return respondWithOfficialFallback(latitude, longitude, accuracy, method);
+      return respondWithOfficialFallback(latitude, longitude, accuracy, method, classifierFlags);
     }
 
     // Keep raw overlap scores intact; they are geometric overlap scores, not
@@ -247,7 +285,7 @@ export async function POST(
       per_level_candidates: hierarchySummary.candidates,
       top3_villages: (hierarchySummary.candidates?.village ?? matches.filter((match) => match.level === "village")).slice(0, 3),
       signals_used: [method, "postgis_accuracy_circle", CLASSIFIER_RPC],
-      flags: isNearestEstimate ? ["nearest_estimate"] : [],
+      flags: [...(isNearestEstimate ? ["nearest_estimate"] : []), ...classifierFlags],
       dataset_version: DATASET_VERSION,
     };
     if (method === "ip" && !isNearestEstimate) {
@@ -285,20 +323,14 @@ export async function POST(
         distance_to_border_m: Number.isFinite(distance) ? distance : null,
       }, { status: 200 });
     }
-    if (fallbackCoordinates && !coordinateClassification) {
-      const prior = withLocationResponseContract(createRwandaProvincePrior(false), [fallbackCoordinates.method, "classifier_unavailable"]);
-      return NextResponse.json({
-        ...prior,
-        flags: ["rwanda_classifier_unavailable"],
-      }, { status: 200 });
-    }
     if (fallbackCoordinates) {
       try {
         return await respondWithOfficialFallback(
           fallbackCoordinates.latitude,
           fallbackCoordinates.longitude,
           fallbackCoordinates.accuracy,
-          fallbackCoordinates.method
+          fallbackCoordinates.method,
+          classifierFallbackFlags(classifierUnavailable, classifierErrorCode)
         );
       } catch {
         // Keep the public location flow non-empty even if both Supabase and
@@ -644,11 +676,23 @@ async function fetchLeadersMasked(
  * Resolve a missing database match against NISR's official 2022 village
  * polygons. The result contains no sample names or unverified leader contacts.
  */
+function classifierFallbackFlags(
+  unavailable: boolean,
+  errorCode: string | null
+): string[] {
+  if (!unavailable) return [];
+  return [
+    "classifier_unavailable",
+    "classifier_error_code=" + (errorCode || "UNKNOWN"),
+  ];
+}
+
 async function respondWithOfficialFallback(
   latitude: number,
   longitude: number,
   accuracy: number,
-  method: "gps" | "map" | "network" | "ip" = "gps"
+  method: "gps" | "map" | "network" | "ip" = "gps",
+  extraFlags: string[] = []
 ): Promise<NextResponse<LocateResponse>> {
   const officialResult = await locateFromOfficialNationalBoundaries(
     latitude,
@@ -673,7 +717,7 @@ async function respondWithOfficialFallback(
     // An error or outside result from the official fallback cannot become a
     // village claim. Return an explicit, labelled service-area prior instead.
     return NextResponse.json(
-      withLocationResponseContract(createRwandaProvincePrior(method === "ip"), [method]),
+      withLocationResponseContract(createRwandaProvincePrior(method === "ip"), [method, ...extraFlags]),
       { status: 200 }
     );
   }
@@ -685,6 +729,7 @@ async function respondWithOfficialFallback(
     latitude,
     longitude,
   }, [method, "official_boundary_fallback"]);
+  response.flags = Array.from(new Set([...(response.flags ?? []), ...extraFlags]));
   return NextResponse.json(response, { status: 200 });
 }
 

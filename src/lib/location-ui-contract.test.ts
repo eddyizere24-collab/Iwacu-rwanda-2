@@ -85,10 +85,12 @@ test("accuracy-rejection guard has an npm command and a CI step", () => {
   assert.ok(workflow.includes("npm run check:no-accuracy-rejection"));
 });
 
-test("unexpected locate errors return an explicit service-area prior, not HTTP 502", () => {
+test("unexpected locate errors continue to the best village fallback and expose classifier failures", () => {
   assert.ok(api.includes("fallbackCoordinates"));
-  assert.ok(api.includes("withLocationResponseContract(createRwandaProvincePrior(false), [method])"));
-  assert.ok(api.includes('flags: ["rwanda_classifier_unavailable"]'));
+  assert.ok(api.includes("classifierFallbackFlags(classifierUnavailable, classifierErrorCode)"));
+  assert.ok(api.includes('withLocationResponseContract(createRwandaProvincePrior(method === "ip"), [method, ...extraFlags])'));
+  assert.ok(api.includes('"classifier_unavailable"'));
+  assert.ok(api.includes('"classifier_error_code="'));
   assert.doesNotMatch(api, /\{ status: 502 \}/);
 });
 

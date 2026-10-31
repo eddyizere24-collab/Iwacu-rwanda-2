@@ -48,20 +48,59 @@ async function postJson(url, body, headers = {}, label = "HTTP request") {
 }
 
 async function getTruthRows(seed) {
-  const rows = await postJson(
-    SUPABASE_URL + "/rest/v1/rpc/w2_sample_district_village_truth",
-    { p_district_scope_code: DISTRICT_CODE, p_seed: seed },
+  const query = new URLSearchParams({
+    select: "district_scope_code,seed,idx,lng,lat,true_village_scope_code,kind",
+    district_scope_code: "eq." + DISTRICT_CODE,
+    seed: "eq." + seed,
+    order: "kind.asc,idx.asc",
+  });
+  const rows = await getJson(
+    SUPABASE_URL + "/rest/v1/w2_truth_samples?" + query.toString(),
     { apikey: ANON_KEY, Authorization: "Bearer " + ANON_KEY },
-    "truth helper " + DISTRICT_CODE + "/" + seed
+    "materialized truth samples " + DISTRICT_CODE + "/" + seed
   );
-  if (!Array.isArray(rows)) throw new Error("Truth helper returned non-array for " + DISTRICT_CODE + "/" + seed);
-  const interior = rows.filter((row) => row.sample_kind === "interior").length;
-  const border = rows.filter((row) => row.sample_kind === "shared_boundary_50m").length;
-  if (rows.length !== 500 || interior !== 400 || border !== 100) {
-    throw new Error("Truth helper contract mismatch " + DISTRICT_CODE + "/" + seed +
-      ": rows=" + rows.length + ", interior=" + interior + ", border=" + border);
+  if (!Array.isArray(rows)) throw new Error("Truth samples returned non-array for " + DISTRICT_CODE + "/" + seed);
+  const mapped = rows.map((row) => ({
+    sample_kind: row.kind,
+    sample_index: Number(row.idx),
+    seed: Number(row.seed),
+    longitude: Number(row.lng),
+    latitude: Number(row.lat),
+    true_village_scope_code: row.true_village_scope_code,
+    true_village_path: null,
+  }));
+  const interior = mapped.filter((row) => row.sample_kind === "interior").length;
+  const border = mapped.filter((row) => row.sample_kind === "shared_boundary_50m").length;
+  if (mapped.length !== 500 || interior !== 400 || border !== 100) {
+    throw new Error("Truth table contract mismatch " + DISTRICT_CODE + "/" + seed +
+      ": rows=" + mapped.length + ", interior=" + interior + ", border=" + border);
   }
-  return rows;
+  return mapped;
+}
+
+async function getJson(url, headers = {}, label = "HTTP GET") {
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const response = await fetch(url, { method: "GET", headers });
+      const raw = await response.text();
+      let json;
+      try { json = raw ? JSON.parse(raw) : null; }
+      catch { json = { raw_text: raw.slice(0, 2000) }; }
+      if (response.ok) return json;
+      const message = label + " failed HTTP " + response.status + ": " + JSON.stringify(json).slice(0, 1800);
+      if (response.status === 429 || response.status >= 500) {
+        lastError = new Error(message);
+        await sleep(250 * (attempt + 1) ** 2);
+        continue;
+      }
+      throw new Error(message);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < 4) await sleep(250 * (attempt + 1) ** 2);
+    }
+  }
+  throw lastError || new Error(label + " failed after retries");
 }
 
 function mulberry32(seed) {

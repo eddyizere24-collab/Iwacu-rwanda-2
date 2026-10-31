@@ -65,6 +65,15 @@ function chosenDistribution(rows) {
   for (const row of rows) output[row.chosen_level] = (output[row.chosen_level] || 0) + 1;
   return output;
 }
+function chosenDistributionPercent(rows) {
+  const counts = chosenDistribution(rows);
+  const total = rows.length;
+  const percentages = {};
+  for (const level of new Set([...LEVELS, ...Object.keys(counts)])) {
+    percentages[level] = total ? Number(((counts[level] || 0) * 100 / total).toFixed(2)) : 0;
+  }
+  return { samples: total, counts, percentages };
+}
 function levelMetrics(rows, level, useCalibrated) {
   const observations = rows.map((row) => row.level_metrics?.[level] || {
     raw_score: 0, calibrated_probability: null, top1_correct: false,
@@ -282,7 +291,7 @@ async function smokeReport() {
     "# IWACU RWANDA 2 — W2 SMOKE REPORT",
     "",
     "Mode: smoke. Districts: Nyarugenge (RW-P1-D11) and Nyamasheke (RW-P3-D37).",
-    "This smoke validates public-key preflight, truth RPC, Next build/start, and HTTP /api/locate calls. It does not evaluate B1–B5.",
+    "This smoke validates public-key preflight, the materialised truth table, Next build/start, and HTTP /api/locate calls. It does not evaluate B1–B6.",
     "",
     markdownTable(["District","Observations","Transport errors","Status"], files.map((x) => [
       x.district_code, x.row_count, x.request_errors, errors.some((e) => e.includes(x.district_code)) ? "FAIL" : "PASS",
@@ -559,6 +568,59 @@ async function fullReport() {
     };
   }
 
+  const b6Thresholds = [
+    { radius:0, qualifying:["village"], threshold:0.80, description:"village" },
+    { radius:20, qualifying:["village"], threshold:0.80, description:"village" },
+    { radius:100, qualifying:["village","cell"], threshold:0.60, description:"village or cell (akagari)" },
+    { radius:500, qualifying:["village","cell","sector"], threshold:0.50, description:"sector (umurenge) or finer" },
+    { radius:2000, qualifying:["village","cell","sector","district"], threshold:0.60, description:"district (akarere) or finer" },
+  ];
+  const informativeness = {};
+  for (const [seedName, seed] of [["SEED-TUNE",TUNE_SEED],["SEED-TEST",TEST_SEED]]) {
+    informativeness[seedName] = {};
+    for (const radius of RADII) {
+      informativeness[seedName][radius] = chosenDistributionPercent(
+        allRows.filter((row) => row.seed === seed && row.radius_m === radius)
+      );
+    }
+  }
+  for (const rule of b6Thresholds) {
+    const slice = seedTestRows.filter((row) => row.radius_m === rule.radius);
+    const qualified = slice.filter((row) => rule.qualifying.includes(row.chosen_level)).length;
+    const observed = slice.length ? qualified / slice.length : 0;
+    gates.push({
+      gate:"B6",
+      slice:"SEED-TEST r=" + rule.radius + "m — " + rule.description,
+      passed:slice.length > 0 && observed >= rule.threshold,
+      observed,
+      qualifying_answers:qualified,
+      samples:slice.length,
+      chosen_level_distribution:chosenDistribution(slice),
+      qualifying_levels:rule.qualifying,
+      required:rule.threshold,
+      provisional:true,
+    });
+  }
+
+  const b6ReportRows = [];
+  for (const seedName of ["SEED-TUNE","SEED-TEST"]) {
+    for (const radius of RADII) {
+      const profile = informativeness[seedName][radius];
+      const rule = b6Thresholds.find((item) => item.radius === radius);
+      const currentRows = seedName === "SEED-TUNE" ? tuneRows : seedTestRows;
+      const qualifying = rule
+        ? rate(currentRows.filter((row) => row.radius_m === radius),
+          (row) => rule.qualifying.includes(row.chosen_level))
+        : null;
+      b6ReportRows.push([
+        seedName, radius, profile.samples,
+        JSON.stringify(profile.percentages),
+        qualifying === null ? "reference only" : (qualifying * 100).toFixed(2) + "%",
+        rule ? (rule.threshold * 100).toFixed(0) + "%" : "—",
+      ]);
+    }
+  }
+
   const metrics = {
     mode:"full",
     expected_districts:EXPECTED_DISTRICTS.length,
@@ -589,6 +651,8 @@ async function fullReport() {
     },
     b1_failing_district_noise_slices:b1Slices,
     b5:b5,
+    informativeness,
+    b6_thresholds:b6Thresholds,
     gates,
     matrix_errors:matrixErrors,
     overall_passed:matrixErrors.length===0 && gates.every((gate) => gate.passed),
@@ -664,6 +728,12 @@ async function fullReport() {
     "- Outside correctly flagged: " + (outside.outside_flagged_correctly || 0) + " / " + (outside.total_points || 0),
     "- True-inside r=0 points incorrectly flagged outside: " + (insideFalse.count || 0) + " / " + (insideFalse.tested || 0),
     "- Map-vs-locate: " + (map.passed || 0) + " / " + (map.attempted || 0) + "; mismatches: " + ((map.mismatches || []).length),
+    "",
+    "## B6 informativeness — chosen-level distribution by noise radius",
+    "",
+    markdownTable(["Seed","Radius m","Samples","Chosen-level distribution (%)","Qualifying levels %","Provisional threshold"], b6ReportRows),
+    "",
+    "B6 is evaluated only on SEED-TEST. SEED-TUNE values are shown as training evidence; the thresholds remain exactly as instructed and have not been tuned using SEED-TEST. Any threshold change requires project-lead approval.",
     "",
     "## B5 report-only metrics",
     "",
