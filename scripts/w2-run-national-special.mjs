@@ -9,6 +9,7 @@ const OUTPUT_DIR = process.env.W2_OUTPUT_DIR || "w2-results";
 const SEEDS = [424242, 20261030];
 const RADII = [0, 20, 100, 500, 2000, 5000, 20000];
 const LEVELS = ["village", "cell", "sector", "district", "province"];
+const ACTION = process.argv[2] || "all";
 const BBOX = { west: 28.85, east: 29.35, south: -2.85, north: -1.65 };
 
 if (!SUPABASE_URL || !ANON_KEY) throw new Error("W2 special-test preflight failed: public Supabase URL/key missing.");
@@ -209,73 +210,83 @@ const OUTSIDE_ZONES = [
 
 async function runOutside() {
   const accepted = [];
-  const perCountry = {};
+  const perSeed = {};
+  const perSeedCountry = {};
   const samplingFailures = [];
   const rpcErrorExamples = [];
-  for (let zoneIndex = 0; zoneIndex < OUTSIDE_ZONES.length; zoneIndex += 1) {
-    const zone = OUTSIDE_ZONES[zoneIndex];
-    const random = mulberry32(20261030 + zoneIndex * 9973);
-    const found = [];
-    let examined = 0;
-    while (found.length < 50 && examined < 3000) {
-      const batchCount = Math.min(24, 3000 - examined);
-      const candidates = Array.from({ length: batchCount }, (_, i) => ({
-        latitude: zone.south + random() * (zone.north - zone.south),
-        longitude: zone.west + random() * (zone.east - zone.west),
-        candidate_index: examined + i + 1,
-      }));
-      examined += batchCount;
-      const classifications = await mapLimit(candidates, 8, async (candidate) => {
-        try {
-          const result = await rpc("classify_rwanda_coordinate", {
-            p_lng: candidate.longitude,
-            p_lat: candidate.latitude,
-            p_buffer_m: 0,
-          });
-          const item = Array.isArray(result) ? result[0] : result;
-          return { candidate, item };
-        } catch (error) {
-          return { candidate, item: null, error: String(error?.message || error) };
+
+  // Exactly 200 outside observations for each allowed seed:
+  // 50 classified points in each of the four neighboring-country zones.
+  for (const seed of SEEDS) {
+    const perCountry = {};
+    for (let zoneIndex = 0; zoneIndex < OUTSIDE_ZONES.length; zoneIndex += 1) {
+      const zone = OUTSIDE_ZONES[zoneIndex];
+      const random = mulberry32((seed + zoneIndex * 9973) >>> 0);
+      const found = [];
+      let examined = 0;
+      while (found.length < 50 && examined < 3000) {
+        const batchCount = Math.min(24, 3000 - examined);
+        const candidates = Array.from({ length: batchCount }, (_, i) => ({
+          latitude: zone.south + random() * (zone.north - zone.south),
+          longitude: zone.west + random() * (zone.east - zone.west),
+          candidate_index: examined + i + 1,
+        }));
+        examined += batchCount;
+        const classifications = await mapLimit(candidates, 8, async (candidate) => {
+          try {
+            const result = await rpc("classify_rwanda_coordinate", {
+              p_lng: candidate.longitude,
+              p_lat: candidate.latitude,
+              p_buffer_m: 0,
+            });
+            const item = Array.isArray(result) ? result[0] : result;
+            return { candidate, item };
+          } catch (error) {
+            return { candidate, item: null, error: String(error?.message || error) };
+          }
+        });
+        const failedClassifierBatch = classifications.filter((entry) => entry.error);
+        if (failedClassifierBatch.length === classifications.length && classifications.length > 0) {
+          const failure = "classify_rwanda_coordinate unavailable in " + zone.country +
+            " for seed " + seed + ": " + failedClassifierBatch[0].error;
+          samplingFailures.push(failure);
+          if (rpcErrorExamples.length < 8) rpcErrorExamples.push(failure);
+          break;
         }
-      });
-      const failedClassifierBatch = classifications.filter((entry) => entry.error);
-      if (failedClassifierBatch.length === classifications.length && classifications.length > 0) {
-        const failure = "classify_rwanda_coordinate unavailable in " + zone.country + ": " +
-          failedClassifierBatch[0].error;
-        samplingFailures.push(failure);
-        if (rpcErrorExamples.length < 8) rpcErrorExamples.push(failure);
-        break;
-      }
-      for (const entry of classifications) {
-        const item = entry.item;
-        const distance = Number(item?.distance_to_border_m);
-        if (
-          item &&
-          item.is_inside_rwanda === false &&
-          Number.isFinite(distance) &&
-          distance >= 1000 && distance <= 200000 &&
-          entry.candidate.longitude >= 28.5 && entry.candidate.longitude <= 31.2 &&
-          entry.candidate.latitude >= -3.2 && entry.candidate.latitude <= -0.7
-        ) {
-          found.push({
-            sample_kind: "outside_" + zone.country,
-            sample_index: found.length + 1,
-            country_zone: zone.country,
-            longitude: entry.candidate.longitude,
-            latitude: entry.candidate.latitude,
-            true_outside_rwanda: true,
-            distance_to_border_m: distance,
-          });
-          if (found.length === 50) break;
+        for (const entry of classifications) {
+          const item = entry.item;
+          const distance = Number(item?.distance_to_border_m);
+          if (
+            item &&
+            item.is_inside_rwanda === false &&
+            Number.isFinite(distance) &&
+            distance >= 1000 && distance <= 200000 &&
+            entry.candidate.longitude >= 28.5 && entry.candidate.longitude <= 31.2 &&
+            entry.candidate.latitude >= -3.2 && entry.candidate.latitude <= -0.7
+          ) {
+            found.push({
+              seed,
+              sample_kind: "outside_" + zone.country,
+              sample_index: found.length + 1,
+              country_zone: zone.country,
+              longitude: entry.candidate.longitude,
+              latitude: entry.candidate.latitude,
+              true_outside_rwanda: true,
+              distance_to_border_m: distance,
+            });
+            if (found.length === 50) break;
+          }
         }
       }
+      if (found.length !== 50) {
+        samplingFailures.push("Outside sampler found " + found.length + "/50 points in " +
+          zone.country + " for seed " + seed + " after " + examined + " candidates.");
+      }
+      perCountry[zone.country] = { count: found.length, candidates_examined: examined };
+      accepted.push(...found);
     }
-    if (found.length !== 50) {
-      samplingFailures.push("Outside sampler found " + found.length + "/50 points in " + zone.country +
-        " after " + examined + " candidates.");
-    }
-    perCountry[zone.country] = { count: found.length, candidates_examined: examined };
-    accepted.push(...found);
+    perSeed[String(seed)] = accepted.filter((row) => row.seed === seed).length;
+    perSeedCountry[String(seed)] = perCountry;
   }
 
   const checked = await mapLimit(accepted, 6, async (sample) => {
@@ -298,7 +309,8 @@ async function runOutside() {
   });
   return {
     total_points: checked.length,
-    points_per_country_zone: perCountry,
+    points_per_seed: perSeed,
+    points_per_country_zone: perSeedCountry,
     border_zone_points: checked.filter((x) => x.expected_class === "border_zone").length,
     outside_flagged_correctly: checked.filter((x) => x.passed).length,
     failures: checked.filter((x) => !x.passed),
@@ -375,53 +387,67 @@ async function runMapVsLocate(districtFiles) {
 }
 
 async function main() {
-  const started = Date.now();
-  const lakeshore = await runLakeshore();
-  const outside = await runOutside();
-
-  const districtFiles = [];
-  const directory = process.env.W2_DISTRICT_RESULTS_DIR || "district-artifacts";
-  for (const file of fs.readdirSync(directory).filter((name) => name.endsWith(".json"))) {
-    try { districtFiles.push(JSON.parse(fs.readFileSync(path.join(directory, file), "utf8"))); } catch {}
+  if (!["all", "lakeshore", "outside", "map"].includes(ACTION)) {
+    throw new Error("Unknown W2 special-test action: " + ACTION);
   }
-  const map = await runMapVsLocate(districtFiles);
+  const started = Date.now();
+  const outputPath = path.join(OUTPUT_DIR, "national-special-results.json");
+  let output = {};
+  if (fs.existsSync(outputPath)) {
+    try { output = JSON.parse(fs.readFileSync(outputPath, "utf8")); }
+    catch { throw new Error("Existing national-special-results.json is invalid; refusing to overwrite partial results."); }
+  }
 
-  const seedTestInside = districtFiles.flatMap((file) => file.rows || [])
-    .filter((row) => row.seed === 20261030 && row.radius_m === 0);
-  const seedTestLakeInside = lakeshore.rows.filter((row) => row.seed === 20261030 && row.radius_m === 0);
-  const insideFalsePositives = [...seedTestInside, ...seedTestLakeInside]
-    .filter((row) => row.outside_rwanda);
+  if (ACTION === "all" || ACTION === "lakeshore") {
+    const lakeshore = await runLakeshore();
+    output.lakeshore_proof = lakeshore.proofs;
+    output.lakeshore_rows = lakeshore.rows;
+  }
+  if (ACTION === "all" || ACTION === "outside") {
+    output.outside_points = await runOutside();
+  }
+  if (ACTION === "all" || ACTION === "map") {
+    const districtFiles = [];
+    const directory = process.env.W2_DISTRICT_RESULTS_DIR || "district-artifacts";
+    for (const file of fs.readdirSync(directory).filter((name) => name.endsWith(".json"))) {
+      try { districtFiles.push(JSON.parse(fs.readFileSync(path.join(directory, file), "utf8"))); } catch {}
+    }
+    output.map_vs_locate = await runMapVsLocate(districtFiles);
 
-  const output = {
-    lakeshore_proof: lakeshore.proofs,
-    lakeshore_rows: lakeshore.rows,
-    outside_points: outside,
-    map_vs_locate: map,
-    seed_test_inside_false_positives: {
+    const seedTestInside = districtFiles.flatMap((file) => file.rows || [])
+      .filter((row) => row.seed === 20261030 && row.radius_m === 0);
+    const seedTestLakeInside = (output.lakeshore_rows || [])
+      .filter((row) => row.seed === 20261030 && row.radius_m === 0);
+    const insideFalsePositives = [...seedTestInside, ...seedTestLakeInside]
+      .filter((row) => row.outside_rwanda);
+    output.seed_test_inside_false_positives = {
       tested: seedTestInside.length + seedTestLakeInside.length,
       count: insideFalsePositives.length,
       examples: insideFalsePositives.slice(0, 20),
-    },
-    elapsed_ms: Date.now() - started,
-  };
-  fs.writeFileSync(path.join(OUTPUT_DIR, "national-special-results.json"), JSON.stringify(output));
+    };
+  }
+
+  output.elapsed_ms = (Number(output.elapsed_ms) || 0) + Date.now() - started;
+  fs.writeFileSync(outputPath, JSON.stringify(output));
   console.log(JSON.stringify({
-    lakeshore: lakeshore.proofs.map((x) => ({
+    action: ACTION,
+    lakeshore: output.lakeshore_proof?.map((x) => ({
       seed: x.seed,
       point_count: x.point_count,
       kivu_bbox_villages: x.kivu_bbox_villages,
       contributing_villages: x.contributing_villages,
     })),
-    outside_total: outside.total_points,
-    outside_per_country_zone: outside.points_per_country_zone,
-    outside_correct: outside.outside_flagged_correctly,
-    outside_failures: outside.failures.length,
-    outside_sampling_failures: outside.sampling_failures,
-    map_attempted: map.attempted,
-    map_passed: map.passed,
-    map_mismatches: map.mismatches.length,
-    map_per_district: map.per_district,
-    inside_false_positives: insideFalsePositives.length,
+    outside_total: output.outside_points?.total_points,
+    outside_per_seed: output.outside_points?.points_per_seed,
+    outside_per_country_zone: output.outside_points?.points_per_country_zone,
+    outside_correct: output.outside_points?.outside_flagged_correctly,
+    outside_failures: output.outside_points?.failures?.length,
+    outside_sampling_failures: output.outside_points?.sampling_failures,
+    map_attempted: output.map_vs_locate?.attempted,
+    map_passed: output.map_vs_locate?.passed,
+    map_mismatches: output.map_vs_locate?.mismatches?.length,
+    map_per_district: output.map_vs_locate?.per_district,
+    inside_false_positives: output.seed_test_inside_false_positives?.count,
     elapsed_ms: output.elapsed_ms,
   }, null, 2));
 }

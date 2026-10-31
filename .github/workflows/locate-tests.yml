@@ -349,9 +349,17 @@ jobs:
           sed -n '1,40p' /tmp/iwacu-national-next.log
           exit 1
 
-      - name: Run Kivu lakeshore, 200 outside points and 210 map-vs-locate points
+      - name: Run Kivu lakeshore truth points — both seeds, all seven radii
         if: ${{ needs.smoke.result == 'success' && needs.district-tests.result == 'success' }}
-        run: node scripts/w2-run-national-special.mjs
+        run: node scripts/w2-run-national-special.mjs lakeshore
+
+      - name: Run 200 outside points per seed — DRC, Burundi, Tanzania and Uganda
+        if: ${{ needs.smoke.result == 'success' && needs.district-tests.result == 'success' }}
+        run: node scripts/w2-run-national-special.mjs outside
+
+      - name: Run map-vs-/api/locate — 210 points, at least 6 per district, zero mismatches
+        if: ${{ needs.smoke.result == 'success' && needs.district-tests.result == 'success' }}
+        run: node scripts/w2-run-national-special.mjs map
 
       - name: Produce exact-gate metrics, calibration proposal and report
         if: always()

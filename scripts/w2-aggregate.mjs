@@ -420,13 +420,18 @@ async function fullReport() {
         chosen_level_distribution: chosenDistribution(slice),
       });
     }
+    const districtFailures = districts.filter((x) => x.samples === 0 || x.correctness < 0.85);
     gates.push({
       gate:"B1",
-      slice:"national r=" + radius,
-      passed:nationalRate >= 0.90,
+      slice:"national r=" + radius + " and every district",
+      passed:nationalRate >= 0.90 &&
+        districts.length === EXPECTED_DISTRICTS.length &&
+        districtFailures.length === 0,
       observed:nationalRate,
       required:0.90,
-      district_failures:districts.filter((x) => x.correctness < 0.85),
+      observed_district_correctness:districts,
+      required_each_district_correctness:0.85,
+      district_failures:districtFailures,
     });
     if (nationalRate < 0.90) b1Slices.push({
       district_code:"NATIONAL", radius_m:radius, samples:national.length,
@@ -473,19 +478,35 @@ async function fullReport() {
   });
 
   const outsideRows = outside.rows || [];
-  const outsidePassed = outside.total_points === 200 &&
-    outsideRows.length === 200 &&
+  const outsideZones = ["DRC", "Burundi", "Tanzania", "Uganda"];
+  const outsidePointsPerSeed = outside.points_per_seed || {};
+  const outsideBySeedZones = outside.points_per_country_zone || {};
+  const outsideSeedCoverage = [TUNE_SEED, TEST_SEED].every((seed) =>
+    Number(outsidePointsPerSeed[String(seed)] || 0) === 200 &&
+    outsideZones.every((zone) =>
+      Number(outsideBySeedZones[String(seed)]?.[zone]?.count || 0) === 50
+    )
+  );
+  const outsidePassed = outside.total_points === 400 &&
+    outsideRows.length === 400 &&
+    outsideSeedCoverage &&
     outsideRows.every((row) => row.passed === true) &&
-    (outside.failures || []).length === 0;
+    (outside.failures || []).length === 0 &&
+    (outside.sampling_failures || []).length === 0;
   gates.push({
     gate:"B3",
-    slice:"200 generated outside points, 50 each DRC/Burundi/Tanzania/Uganda zones",
+    slice:"400 outside points: 200 per seed, 50 per DRC/Burundi/Tanzania/Uganda zone",
     passed:outsidePassed,
     observed_total:outside.total_points,
+    observed_points_per_seed:outsidePointsPerSeed,
+    observed_points_per_country_zone:outsideBySeedZones,
     correctly_flagged:outside.outside_flagged_correctly,
-    border_zone_points:outside.border_zone_points,
+    border_zone_points_counted_separately:outside.border_zone_points,
+    sampling_failures:(outside.sampling_failures || []).length,
     failures:(outside.failures || []).length,
-    required_total:200,
+    required_total:400,
+    required_per_seed:200,
+    required_per_zone_per_seed:50,
     required_failures:0,
   });
   const insidePassed = Number(insideFalse.count) === 0;
@@ -589,7 +610,7 @@ async function fullReport() {
     "- Active district jobs: " + byCodeSize(byCode) + " / 30.",
     "- District observations: " + baseRows.length + " (expected 210,000 in full mode).",
     "- Kivu lakeshore-proxy observations: " + lakeRows.length + " (both seeds and all seven radii).",
-    "- Outside points: " + outside.total_points + " (50 each in the DRC, Burundi, Tanzania and Uganda coordinate zones).",
+    "- Outside points: " + outside.total_points + " (200 per seed; 50 per country-zone per seed).",
     "- Map-vs-locate attempts: " + map.attempted + ".",
     "",
     "## Kivu bounding-box sampler proof",
