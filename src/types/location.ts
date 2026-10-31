@@ -60,6 +60,10 @@ export interface LocateSuccess {
   longitude?: number;
   /** Age of the underlying device fix at the time it was submitted. */
   fix_age_ms?: number;
+  /** Time from starting the location attempt to receiving this answer (milliseconds). */
+  elapsed_ms?: number;
+  /** Git commit serving the response, when supplied by the hosting platform. */
+  commit_sha?: string;
   /** Candidate shares aggregated by administrative level; geometric shares, not calibrated probabilities. */
   hierarchyCandidates?: Partial<Record<"province" | "district" | "sector" | "cell" | "village", ConfidenceMatch[]>>;
 }

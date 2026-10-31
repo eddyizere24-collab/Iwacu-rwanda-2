@@ -73,6 +73,7 @@ export function useLocation() {
   }, [stopLocationWatch]);
 
   const locate = useCallback(async () => {
+    const requestStartedAt = Date.now();
     abortRef.current?.abort();
     stopLocationWatch();
     const controller = new AbortController();
@@ -104,6 +105,7 @@ export function useLocation() {
           latitude: point?.latitude ?? json.latitude,
           longitude: point?.longitude ?? json.longitude,
           fix_age_ms: Math.max(0, fixAgeMs),
+          elapsed_ms: Math.max(0, Date.now() - requestStartedAt),
         },
         errorCode: null,
         errorMessageKiny: null,
@@ -414,6 +416,7 @@ export function useLocation() {
   }, [stopLocationWatch]);
 
   const chooseVillage = useCallback(async (scopeCode: string, selectionMethod: FeedbackMethod = "manual") => {
+    const requestStartedAt = Date.now();
     feedbackMethodRef.current = typeof navigator !== "undefined" && !navigator.onLine && selectionMethod === "manual" ? "offline" : selectionMethod;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -535,7 +538,7 @@ export function useLocation() {
       }
       setState({
         status: "success",
-        data: json,
+        data: { ...json, elapsed_ms: Math.max(0, Date.now() - requestStartedAt) },
         errorCode: null,
         errorMessageKiny: null,
         errorMessageEng: null,
@@ -559,6 +562,7 @@ export function useLocation() {
     longitude: number,
     accuracy = 200
   ) => {
+    const requestStartedAt = Date.now();
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -570,8 +574,8 @@ export function useLocation() {
       const fallback = await runOfflineConfidence(latitude, longitude, accuracy);
       if (controller.signal.aborted) return;
       const data = fallback.status === "success"
-        ? { ...fallback, source: "nearest" as const }
-        : createRwandaProvincePrior(false);
+        ? { ...fallback, source: "nearest" as const, elapsed_ms: Math.max(0, Date.now() - requestStartedAt) }
+        : { ...createRwandaProvincePrior(false), elapsed_ms: Math.max(0, Date.now() - requestStartedAt) };
       setState({
         status: "success",
         data,
@@ -612,7 +616,7 @@ export function useLocation() {
       }
       setState({
         status: "success",
-        data: json,
+        data: { ...json, elapsed_ms: Math.max(0, Date.now() - requestStartedAt) },
         errorCode: null,
         errorMessageKiny: null,
         errorMessageEng: null,

@@ -355,6 +355,7 @@ function withLocationResponseContract(
     signals_used: result.signals_used ?? signals,
     flags: result.flags ?? (result.source === "nearest" ? ["nearest_estimate"] : []),
     dataset_version: result.dataset_version ?? DATASET_VERSION,
+    commit_sha: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? "unknown",
   };
 }
 
@@ -427,6 +428,7 @@ async function respondWithBorderZone(
       signals_used: [method, CLASSIFIER_RPC],
       flags: ["border_zone"],
       dataset_version: DATASET_VERSION,
+      commit_sha: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? "unknown",
       warning: "BORDER_ZONE_NO_VILLAGE_CLAIM",
     }, { status: 200 });
   } catch {
@@ -439,6 +441,7 @@ async function respondWithBorderZone(
       signals_used: [method, CLASSIFIER_RPC],
       flags: ["border_zone", "district_candidate_unavailable"],
       dataset_version: DATASET_VERSION,
+      commit_sha: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? "unknown",
       warning: "BORDER_ZONE_NO_VILLAGE_CLAIM",
       distance_to_border_m: distanceToBorder,
     }, { status: 200 });

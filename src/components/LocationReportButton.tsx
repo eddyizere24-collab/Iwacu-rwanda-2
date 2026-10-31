@@ -1,25 +1,43 @@
 "use client";
 
 import { useState } from "react";
+import type { ConfidenceMatch } from "@/types/boundary";
 import type { LocateSuccess } from "@/types/location";
+
+const LEVELS = ["province", "district", "sector", "cell", "village"] as const;
 
 export function LocationReportButton({ data }: { data: LocateSuccess | null }) {
   const [message, setMessage] = useState("");
 
   async function copyReport() {
+    const candidates = data?.per_level_candidates ?? data?.hierarchyCandidates ?? {};
+    const percentages = LEVELS.map((level) => ({
+      level,
+      candidates: ((candidates[level] ?? []) as ConfidenceMatch[]).slice(0, 3).map((item) => ({
+        scope_code: item.scope_code,
+        name_kiny: item.name_kiny,
+        score_percent: item.confidence,
+      })),
+    }));
     const report = {
-      report_version: "IWACU-W4",
+      report_version: "IWACU-W04",
       created_at: new Date().toISOString(),
       source: data?.source ?? null,
+      signals_used: data?.signals_used ?? [],
+      accuracy_m: data?.accuracy_m ?? null,
       level: data?.level ?? null,
       path: data?.path ?? null,
-      per_level_candidates: data?.per_level_candidates ?? data?.hierarchyCandidates ?? {},
+      percentages,
+      score_note: "Scores are geometric overlap scores, not calibrated probabilities.",
+      per_level_candidates: candidates,
       top3_villages: data?.top3_villages ?? data?.matches?.filter((item) => item.level === "village").slice(0, 3) ?? [],
-      signals_used: data?.signals_used ?? [],
+      timings_ms: {
+        elapsed_ms: data?.elapsed_ms ?? null,
+        fix_age_ms: data?.fix_age_ms ?? null,
+      },
       flags: data?.flags ?? [],
-      accuracy_m: data?.accuracy_m ?? null,
-      fix_age_ms: data?.fix_age_ms ?? null,
       dataset_version: data?.dataset_version ?? "unknown",
+      commit_sha: data?.commit_sha ?? "unknown",
       // No exact coordinates, IP address, account ID, or secret is included.
       user_agent: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
     };
