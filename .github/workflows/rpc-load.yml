@@ -1,0 +1,41 @@
+name: RPC v2 six-worker load test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rpc-load:
+    name: Anon RPC load test (6 workers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Preflight public Supabase credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${NEXT_PUBLIC_SUPABASE_URL:-}" || {
+            echo "::error::Missing NEXT_PUBLIC_SUPABASE_URL secret"
+            exit 1
+          }
+          test -n "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" || {
+            echo "::error::Missing NEXT_PUBLIC_SUPABASE_ANON_KEY secret"
+            exit 1
+          }
+          echo "Preflight PASS: only public URL and anon key are used."
+
+      - name: Run six-worker v2 RPC load test and serial v1 comparison
+        run: node scripts/rpc-load.mjs
