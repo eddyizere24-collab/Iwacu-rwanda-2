@@ -3,9 +3,6 @@ name: W2 exact 30-district location and calibration gates
 run-name: W2 exact validation — ${{ github.ref_name }}
 
 on:
-  push:
-    branches:
-      - wip/p2-tests
   workflow_dispatch:
 
 permissions:
@@ -13,7 +10,7 @@ permissions:
 
 concurrency:
   group: w2-locate-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   smoke:
@@ -135,7 +132,7 @@ jobs:
     timeout-minutes: 240
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 3
       matrix:
         include:
           - district_code: RW-P1-D11
