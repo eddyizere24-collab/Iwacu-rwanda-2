@@ -20,7 +20,9 @@ test("GPS network fix, GPS watch, IP and last-known fix start independently", ()
   assert.match(hook, /watchPosition\([\s\S]*?enableHighAccuracy: true/);
   assert.match(hook, /LAST_FIX_KEY/);
   assert.match(hook, /createRwandaProvincePrior/);
-  assert.match(hook, /setTimeout\(resolve, 4_000\)/);
+  assert.match(hook, /lastConfirmedPriorPromise/);
+  assert.match(hook, /void submitIpEstimate\\(\\)/);
+  assert.match(hook, /setTimeout\\(resolve, 3_000\\)/);
 });
 
 test("UI never renders the known empty-search or insufficient-score dead-end wording", () => {
