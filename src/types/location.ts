@@ -41,6 +41,7 @@ export interface LocateSuccess {
   signals_used?: string[];
   flags?: string[];
   dataset_version?: string;
+  calibration_version?: string;
   matches: ConfidenceMatch[];   // sorted by confidence DESC
   hierarchy: {
     country?: ConfidenceMatch;
@@ -64,7 +65,7 @@ export interface LocateSuccess {
   elapsed_ms?: number;
   /** Git commit serving the response, when supplied by the hosting platform. */
   commit_sha?: string;
-  /** Candidate shares aggregated by administrative level; geometric shares, not calibrated probabilities. */
+  /** Per-level candidates retain raw_score and expose calibrated_probability after back-off. */
   hierarchyCandidates?: Partial<Record<"province" | "district" | "sector" | "cell" | "village", ConfidenceMatch[]>>;
 }
 

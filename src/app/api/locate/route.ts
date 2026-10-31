@@ -16,6 +16,7 @@ import { createRwandaProvincePrior } from "@/lib/location-prior";
 import { listOfficialNationalLocationIndex, locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
 import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
 import { capBorderZoneHierarchyAtSector, classifyThenContinue, isBorderZoneCandidate } from "@/lib/classifier-flow";
+import { backoffLocation, CALIBRATION_VERSION, type BackoffVillageInput } from "@/lib/backoff";
 import offlineLocationIndex from "../../../../public/offline/location-index.json";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
@@ -260,20 +261,48 @@ export async function POST(
     // Aggregate village intersection shares up the official NISR hierarchy.
     // Scores describe overlap with the uncertainty circle, not calibrated odds.
     const hierarchySummary = await buildHierarchicalSummary(supabase, realRows);
+    const backoff = backoffLocation(hierarchySummary.backoffVillages);
+    const toLocateCandidate = (candidate: typeof backoff.chosen): ConfidenceMatch & {
+      raw_score: number;
+      calibrated_probability: number;
+    } => ({
+      scope_code: candidate.scope_code,
+      name_kiny: candidate.name_kiny,
+      name_eng: candidate.name_eng ?? null,
+      level: candidate.level,
+      confidence: candidate.confidence,
+      intersection_area_m2: Number(candidate.intersection_area_m2) || 0,
+      raw_score: candidate.raw_score,
+      calibrated_probability: candidate.calibrated_probability,
+    });
+    const calibratedCandidates = Object.fromEntries(
+      Object.entries(backoff.per_level_candidates).map(([level, items]) => [
+        level,
+        (items ?? []).map(toLocateCandidate),
+      ])
+    ) as LocateSuccess["hierarchyCandidates"];
+    const backoffHierarchy: LocateSuccess["hierarchy"] = {
+      province: backoff.hierarchy.province ? toLocateCandidate(backoff.hierarchy.province) : undefined,
+      district: backoff.hierarchy.district ? toLocateCandidate(backoff.hierarchy.district) : undefined,
+      sector: backoff.hierarchy.sector ? toLocateCandidate(backoff.hierarchy.sector) : undefined,
+      cell: backoff.hierarchy.cell ? toLocateCandidate(backoff.hierarchy.cell) : undefined,
+      village: backoff.hierarchy.village ? toLocateCandidate(backoff.hierarchy.village) : undefined,
+    };
     const bestVillageConfidence = Math.max(
       0,
-      ...(hierarchySummary.candidates?.village ?? []).map((candidate) =>
-        Number(candidate.confidence) || 0
-      )
+      ...realRows.map((row) => Number(row.confidence) || 0)
     );
-    // Border uncertainty must not produce a village/cell claim unless a
-    // village candidate reaches the established 5% confidence threshold.
+    // Keep the existing border-zone safeguard after calibrated back-off.
     const selectedHierarchy = capBorderZoneHierarchyAtSector(
-      hierarchySummary.hierarchy,
+      backoffHierarchy,
       borderZone,
       bestVillageConfidence
     );
-    const isNearestEstimate = matches[0].intersection_area_m2 === 0;
+    const chosenLevel = selectedHierarchy.village ? "village"
+      : selectedHierarchy.cell ? "cell"
+      : selectedHierarchy.sector ? "sector"
+      : selectedHierarchy.district ? "district"
+      : "province";
     const path = {
       intara: selectedHierarchy.province?.name_kiny,
       akarere: selectedHierarchy.district?.name_kiny,
@@ -281,23 +310,26 @@ export async function POST(
       akagari: selectedHierarchy.cell?.name_kiny,
       umudugudu: selectedHierarchy.village?.name_kiny,
     };
+    const isNearestEstimate = matches[0].intersection_area_m2 === 0;
+    const calibratedTopVillages = (calibratedCandidates?.village ?? []).slice(0, 3);
     const response: LocateSuccess = {
       status: "success",
-      matches: matches.slice(0, 3),
+      matches: calibratedTopVillages,
       hierarchy: selectedHierarchy,
-      hierarchyCandidates: hierarchySummary.candidates,
+      hierarchyCandidates: calibratedCandidates,
       leaders: [],
       source: isNearestEstimate ? "nearest" : method,
       accuracy_m: accuracy,
       latitude,
       longitude,
-      level: selectedHierarchy.village ? "village" : selectedHierarchy.cell ? "cell" : selectedHierarchy.sector ? "sector" : selectedHierarchy.district ? "district" : "province",
+      level: chosenLevel,
       path,
-      per_level_candidates: hierarchySummary.candidates,
-      top3_villages: (hierarchySummary.candidates?.village ?? matches.filter((match) => match.level === "village")).slice(0, 3),
+      per_level_candidates: calibratedCandidates,
+      top3_villages: calibratedTopVillages,
       signals_used: [method, "postgis_accuracy_circle", CLASSIFIER_RPC],
       flags: [...(isNearestEstimate ? ["nearest_estimate"] : []), ...classifierFlags],
       dataset_version: DATASET_VERSION,
+      calibration_version: CALIBRATION_VERSION,
     };
     if (method === "ip" && !isNearestEstimate) {
       response.warning = "IP_NETWORK_LOCATION_COARSE_NOT_DEVICE_GPS";
@@ -407,6 +439,7 @@ async function buildHierarchicalSummary(
 ): Promise<{
   hierarchy: LocateSuccess["hierarchy"];
   candidates: LocateSuccess["hierarchyCandidates"];
+  backoffVillages: BackoffVillageInput[];
 }> {
   const villageMatches: ConfidenceMatch[] = villageRows.map((row) => ({
     scope_code: row.scope_code,
@@ -464,7 +497,36 @@ async function buildHierarchicalSummary(
     }
   }
 
-  return { hierarchy, candidates };
+  const backoffVillages: BackoffVillageInput[] = villageRows.flatMap((row) => {
+    const parts = String(row.scope_code).split("-");
+    if (parts.length !== 6 || parts[0] !== "RW") return [];
+    const getNode = (code: string) => {
+      const meta = byCode.get(code);
+      if (!meta) return null;
+      return {
+        scope_code: meta.scope_code,
+        name_kiny: meta.name_kiny,
+        name_eng: meta.name_eng,
+      };
+    };
+    const parent_chain = {
+      intara: getNode(parts.slice(0, 2).join("-")),
+      akarere: getNode(parts.slice(0, 3).join("-")),
+      umurenge: getNode(parts.slice(0, 4).join("-")),
+      akagari: getNode(parts.slice(0, 5).join("-")),
+    };
+    if (!parent_chain.intara) return [];
+    return [{
+      scope_code: row.scope_code,
+      name_kiny: row.name_kiny,
+      name_eng: row.name_eng,
+      raw_score: Math.max(0, Number(row.confidence) || 0) / 100,
+      intersection_area_m2: Math.max(0, Number(row.intersection_area_m2) || 0),
+      parent_chain,
+    }];
+  });
+
+  return { hierarchy, candidates, backoffVillages };
 }
 
 async function buildHierarchy(

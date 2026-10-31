@@ -169,7 +169,7 @@ function compactObservation(row, response, seed, radius) {
     const top = candidates[0];
     const score = Math.max(0, Math.min(100, Number(top?.confidence) || 0));
     levelMetrics[candidateLevel] = {
-      raw_score: score / 100,
+      raw_score: Number.isFinite(Number(top?.raw_score)) ? Number(top.raw_score) : score / 100,
       calibrated_probability: top?.calibrated_probability !== null &&
         top?.calibrated_probability !== undefined &&
         Number.isFinite(Number(top.calibrated_probability))

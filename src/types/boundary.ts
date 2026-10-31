@@ -28,6 +28,8 @@ export interface ConfidenceMatch {
   name_kiny: string;
   name_eng: string | null;
   level: BoundaryLevel;
-  confidence: number; // 0–100
+  confidence: number; // legacy 0–100 raw score scale
   intersection_area_m2: number;
+  raw_score?: number;
+  calibrated_probability?: number;
 }
