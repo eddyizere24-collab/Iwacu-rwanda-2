@@ -69,21 +69,10 @@ jobs:
           set -euo pipefail
           if [[ ! -s results/rpc-load.json ]]; then
             mkdir -p results
-            node --input-type=module <<'NODE'
-            import { writeFile } from "node:fs/promises";
-            const record = {
-              status: "INCOMPLETE",
-              generated_at: new Date().toISOString(),
-              github: {
-                run_id: process.env.GITHUB_RUN_ID,
-                sha: process.env.GITHUB_SHA
-              },
-              reason: "The load runner did not produce a result file; inspect workflow job status."
-            };
-            await writeFile("results/rpc-load.json", JSON.stringify(record, null, 2) + "\n");
-            NODE
+            node -e 'const fs = require("node:fs"); const record = { status: "INCOMPLETE", generated_at: new Date().toISOString(), github: { run_id: process.env.GITHUB_RUN_ID, sha: process.env.GITHUB_SHA }, reason: "The load runner did not produce a result file." }; fs.writeFileSync("results/rpc-load.json", JSON.stringify(record, null, 2));'
           fi
           test -s results/rpc-load.json
+          node -e 'JSON.parse(require("node:fs").readFileSync("results/rpc-load.json", "utf8")); console.log("Result JSON valid.");'
 
       - name: Checkout results branch
         if: always()
