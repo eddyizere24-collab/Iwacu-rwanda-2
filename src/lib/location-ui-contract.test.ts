@@ -51,11 +51,12 @@ test("landmarks feature is OFF by default and does not render or request when di
 test("location route classifies the Rwanda border with the private v2 classifier before village scoring", () => {
   assert.ok(api.includes('const CLASSIFIER_RPC = "classify_rwanda_coordinate_v2";'));
   assert.ok(api.indexOf("supabase.rpc(CLASSIFIER_RPC") < api.indexOf('"calculate_location_confidence"'));
-  assert.ok(api.includes("coordinateClassification.nearest_border_district_code"));
+  assert.ok(api.includes("isBorderZoneCandidate(state.classification, accuracy)"));
+  assert.ok(api.includes("capBorderZoneHierarchyAtSector("));
   assert.ok(api.includes("outside_rwanda: true"));
-  assert.ok(api.includes('flags: ["border_zone"]'));
-  assert.ok(api.includes("top3_villages: []"));
-  assert.ok(api.includes("per_level_candidates: candidates"));
+  assert.doesNotMatch(api, /nearest_border_district_code/);
+  assert.ok(api.includes('...(borderZone ? ["border_zone"] : [])'));
+  assert.ok(api.includes("per_level_candidates: hierarchySummary.candidates"));
   assert.ok(api.includes("commit_sha: process.env.VERCEL_GIT_COMMIT_SHA"));
 });
 

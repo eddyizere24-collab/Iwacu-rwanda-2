@@ -47,3 +47,45 @@ export async function classifyThenContinue<T, TResult>(
   const result = await continueSearch(state);
   return { ...state, result };
 }
+
+
+export interface RwandaCoordinateClassification {
+  is_inside_rwanda: boolean;
+  distance_to_border_m: number | null;
+}
+
+/**
+ * A point outside the country polygon is still uncertain when its distance
+ * to the border is within the reported GPS accuracy, with a 250 m minimum.
+ */
+export function isBorderZoneCandidate(
+  classification: RwandaCoordinateClassification | null,
+  accuracyMeters: number,
+): boolean {
+  if (!classification || classification.is_inside_rwanda) return false;
+  const distance = classification.distance_to_border_m;
+  if (typeof distance !== "number" || !Number.isFinite(distance) || distance < 0) {
+    return false;
+  }
+  const accuracy = Number.isFinite(accuracyMeters) ? Math.max(0, accuracyMeters) : 0;
+  return distance <= Math.max(accuracy, 250);
+}
+
+/**
+ * Border-zone answers may name a village only when its best overlap score
+ * reaches the established 5% location-confidence threshold. Otherwise,
+ * retain the administrative hierarchy only through sector (umurenge).
+ */
+export function capBorderZoneHierarchyAtSector<
+  T extends { cell?: unknown; village?: unknown }
+>(
+  hierarchy: T,
+  borderZone: boolean,
+  bestVillageConfidence: number,
+  villageConfidenceThreshold = 5,
+): T {
+  if (!borderZone || bestVillageConfidence >= villageConfidenceThreshold) {
+    return hierarchy;
+  }
+  return { ...hierarchy, cell: undefined, village: undefined };
+}

@@ -15,7 +15,7 @@ import { aggregateLocationHierarchy } from "@/lib/location-hierarchy";
 import { createRwandaProvincePrior } from "@/lib/location-prior";
 import { listOfficialNationalLocationIndex, locateFromOfficialNationalBoundaries } from "@/lib/national-boundaries";
 import { nearestVillageEstimateFromIndex } from "@/lib/representative-location";
-import { classifyThenContinue } from "@/lib/classifier-flow";
+import { capBorderZoneHierarchyAtSector, classifyThenContinue, isBorderZoneCandidate } from "@/lib/classifier-flow";
 import offlineLocationIndex from "../../../../public/offline/location-index.json";
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LeaderPublic } from "@/types/leader";
@@ -38,8 +38,6 @@ const LocateBodySchema = z.object({
 interface ClassifierRow {
   is_inside_rwanda: boolean;
   distance_to_border_m: number | null;
-  nearest_border_district: string | null;
-  nearest_border_district_code: string | null;
 }
 
 interface RpcRow {
@@ -60,9 +58,8 @@ export async function POST(
   let coordinateClassification: {
     is_inside_rwanda: boolean;
     distance_to_border_m: number | null;
-    nearest_border_district: string | null;
-    nearest_border_district_code: string | null;
   } | null = null;
+  let borderZone = false;
   let fallbackCoordinates: {
     latitude: number;
     longitude: number;
@@ -150,7 +147,11 @@ export async function POST(
         return { data: data as ClassifierRow[] | null, error };
       },
       async (state) => {
-        if (state.classification && !state.classification.is_inside_rwanda) {
+        if (
+          state.classification &&
+          !state.classification.is_inside_rwanda &&
+          !isBorderZoneCandidate(state.classification, accuracy)
+        ) {
           return null;
         }
         const { data, error } = await supabase.rpc(
@@ -166,39 +167,32 @@ export async function POST(
       (state) => {
         // Retain the classifier error even if the subsequent village RPC throws.
         coordinateClassification = state.classification;
+        borderZone = isBorderZoneCandidate(state.classification, accuracy);
         classifierUnavailable = state.unavailable;
         classifierErrorCode = state.errorCode;
       }
     );
 
     coordinateClassification = classifierFlow.classification;
+    borderZone = isBorderZoneCandidate(coordinateClassification, accuracy);
     classifierUnavailable = classifierFlow.unavailable;
     classifierErrorCode = classifierFlow.errorCode;
-    const classifierFlags = classifierFallbackFlags(
-      classifierUnavailable,
-      classifierErrorCode
-    );
+    const classifierFlags = [
+      ...classifierFallbackFlags(classifierUnavailable, classifierErrorCode),
+      ...(borderZone ? ["border_zone"] : []),
+    ];
 
-    if (coordinateClassification && !coordinateClassification.is_inside_rwanda) {
-      const borderDistance = coordinateClassification.distance_to_border_m == null
-        ? Number.NaN
-        : Number(coordinateClassification.distance_to_border_m);
-      if (
-        Number.isFinite(borderDistance) &&
-        borderDistance <= 5_000 &&
-        coordinateClassification.nearest_border_district_code
-      ) {
-        return await respondWithBorderZone(
-          supabase,
-          coordinateClassification.nearest_border_district_code,
-          borderDistance,
-          method
-        );
-      }
+    if (
+      coordinateClassification &&
+      !coordinateClassification.is_inside_rwanda &&
+      !borderZone
+    ) {
+      const distance = coordinateClassification.distance_to_border_m;
       return NextResponse.json({
         status: "outside",
         outside_rwanda: true,
-        distance_to_border_m: Number.isFinite(borderDistance) ? borderDistance : null,
+        distance_to_border_m:
+          typeof distance === "number" && Number.isFinite(distance) ? distance : null,
       }, { status: 200 });
     }
 
@@ -266,25 +260,38 @@ export async function POST(
     // Aggregate village intersection shares up the official NISR hierarchy.
     // Scores describe overlap with the uncertainty circle, not calibrated odds.
     const hierarchySummary = await buildHierarchicalSummary(supabase, realRows);
+    const bestVillageConfidence = Math.max(
+      0,
+      ...(hierarchySummary.candidates?.village ?? []).map((candidate) =>
+        Number(candidate.confidence) || 0
+      )
+    );
+    // Border uncertainty must not produce a village/cell claim unless a
+    // village candidate reaches the established 5% confidence threshold.
+    const selectedHierarchy = capBorderZoneHierarchyAtSector(
+      hierarchySummary.hierarchy,
+      borderZone,
+      bestVillageConfidence
+    );
     const isNearestEstimate = matches[0].intersection_area_m2 === 0;
     const path = {
-      intara: hierarchySummary.hierarchy.province?.name_kiny,
-      akarere: hierarchySummary.hierarchy.district?.name_kiny,
-      umurenge: hierarchySummary.hierarchy.sector?.name_kiny,
-      akagari: hierarchySummary.hierarchy.cell?.name_kiny,
-      umudugudu: hierarchySummary.hierarchy.village?.name_kiny,
+      intara: selectedHierarchy.province?.name_kiny,
+      akarere: selectedHierarchy.district?.name_kiny,
+      umurenge: selectedHierarchy.sector?.name_kiny,
+      akagari: selectedHierarchy.cell?.name_kiny,
+      umudugudu: selectedHierarchy.village?.name_kiny,
     };
     const response: LocateSuccess = {
       status: "success",
       matches: matches.slice(0, 3),
-      hierarchy: hierarchySummary.hierarchy,
+      hierarchy: selectedHierarchy,
       hierarchyCandidates: hierarchySummary.candidates,
       leaders: [],
       source: isNearestEstimate ? "nearest" : method,
       accuracy_m: accuracy,
       latitude,
       longitude,
-      level: hierarchySummary.hierarchy.village ? "village" : hierarchySummary.hierarchy.cell ? "cell" : hierarchySummary.hierarchy.sector ? "sector" : hierarchySummary.hierarchy.district ? "district" : "province",
+      level: selectedHierarchy.village ? "village" : selectedHierarchy.cell ? "cell" : selectedHierarchy.sector ? "sector" : selectedHierarchy.district ? "district" : "province",
       path,
       per_level_candidates: hierarchySummary.candidates,
       top3_villages: (hierarchySummary.candidates?.village ?? matches.filter((match) => match.level === "village")).slice(0, 3),
@@ -308,29 +315,19 @@ export async function POST(
   } catch (err) {
     console.error("[locate] Unexpected error; returning a best available location fallback:", err);
     if (coordinateClassification && !coordinateClassification.is_inside_rwanda) {
-      const distance = coordinateClassification.distance_to_border_m == null ? Number.NaN : Number(coordinateClassification.distance_to_border_m);
-      if (
-        Number.isFinite(distance) &&
-        distance <= 5_000 &&
-        coordinateClassification.nearest_border_district_code &&
-        isSupabasePublicConfigured()
-      ) {
-        try {
-          return await respondWithBorderZone(
-            createSupabasePublicClient(),
-            coordinateClassification.nearest_border_district_code,
-            distance,
-            fallbackCoordinates?.method ?? "gps"
-          );
-        } catch {
-          // Fall through to the coarse outside response; never guess a village.
-        }
+      const distance = coordinateClassification.distance_to_border_m;
+      borderZone = isBorderZoneCandidate(
+        coordinateClassification,
+        fallbackCoordinates?.accuracy ?? 0
+      );
+      if (!borderZone) {
+        return NextResponse.json({
+          status: "outside",
+          outside_rwanda: true,
+          distance_to_border_m:
+            typeof distance === "number" && Number.isFinite(distance) ? distance : null,
+        }, { status: 200 });
       }
-      return NextResponse.json({
-        status: "outside",
-        outside_rwanda: true,
-        distance_to_border_m: Number.isFinite(distance) ? distance : null,
-      }, { status: 200 });
     }
     if (fallbackCoordinates) {
       try {
@@ -339,7 +336,10 @@ export async function POST(
           fallbackCoordinates.longitude,
           fallbackCoordinates.accuracy,
           fallbackCoordinates.method,
-          classifierFallbackFlags(classifierUnavailable, classifierErrorCode)
+          [
+            ...classifierFallbackFlags(classifierUnavailable, classifierErrorCode),
+            ...(borderZone ? ["border_zone"] : []),
+          ]
         );
       } catch {
         // Keep the public location flow non-empty even if both Supabase and
@@ -400,94 +400,6 @@ function withLocationResponseContract(
   };
 }
 
-
-async function respondWithBorderZone(
-  supabase: ReturnType<typeof createSupabasePublicClient>,
-  districtCode: string | null,
-  distanceToBorder: number,
-  method: "gps" | "map" | "network" | "ip"
-): Promise<NextResponse<LocateResponse>> {
-  try {
-    if (!districtCode) throw new Error("nearest_border_district_missing");
-    const { data: district, error } = await supabase
-      .from("boundaries")
-      .select("scope_code, name_kiny, name_eng, level, parent_id")
-      .eq("scope_code", districtCode)
-      .eq("level", "district")
-      .is("valid_to", null)
-      .maybeSingle();
-    if (error || !district) throw new Error("nearest_border_district_not_found");
-
-    let province: { scope_code: string; name_kiny: string; name_eng: string | null; level: string } | null = null;
-    if (district.parent_id) {
-      const result = await supabase
-        .from("boundaries")
-        .select("scope_code, name_kiny, name_eng, level")
-        .eq("id", district.parent_id)
-        .eq("level", "province")
-        .is("valid_to", null)
-        .maybeSingle();
-      province = result.data;
-    }
-
-    const districtMatch: ConfidenceMatch = {
-      scope_code: district.scope_code,
-      name_kiny: district.name_kiny,
-      name_eng: district.name_eng,
-      level: "district",
-      confidence: 0,
-      intersection_area_m2: 0,
-    };
-    const hierarchy: LocateSuccess["hierarchy"] = { district: districtMatch };
-    const candidates: NonNullable<LocateSuccess["hierarchyCandidates"]> = { district: [districtMatch] };
-    const path: NonNullable<LocateSuccess["path"]> = { akarere: district.name_kiny };
-    if (province) {
-      const provinceMatch: ConfidenceMatch = {
-        scope_code: province.scope_code,
-        name_kiny: province.name_kiny,
-        name_eng: province.name_eng,
-        level: "province",
-        confidence: 0,
-        intersection_area_m2: 0,
-      };
-      hierarchy.province = provinceMatch;
-      candidates.province = [provinceMatch];
-      path.intara = province.name_kiny;
-    }
-
-    return NextResponse.json({
-      status: "success",
-      matches: [districtMatch],
-      hierarchy,
-      hierarchyCandidates: candidates,
-      leaders: [],
-      source: method,
-      level: "district",
-      path,
-      per_level_candidates: candidates,
-      top3_villages: [],
-      signals_used: [method, CLASSIFIER_RPC],
-      flags: ["border_zone"],
-      dataset_version: DATASET_VERSION,
-      commit_sha: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? "unknown",
-      warning: "BORDER_ZONE_NO_VILLAGE_CLAIM",
-    }, { status: 200 });
-  } catch {
-    const prior = createRwandaProvincePrior(false);
-    return NextResponse.json({
-      ...prior,
-      level: "province",
-      per_level_candidates: prior.hierarchyCandidates,
-      top3_villages: [],
-      signals_used: [method, CLASSIFIER_RPC],
-      flags: ["border_zone", "district_candidate_unavailable"],
-      dataset_version: DATASET_VERSION,
-      commit_sha: process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GITHUB_SHA ?? "unknown",
-      warning: "BORDER_ZONE_NO_VILLAGE_CLAIM",
-      distance_to_border_m: distanceToBorder,
-    }, { status: 200 });
-  }
-}
 
 async function buildHierarchicalSummary(
   supabase: ReturnType<typeof createSupabasePublicClient>,
