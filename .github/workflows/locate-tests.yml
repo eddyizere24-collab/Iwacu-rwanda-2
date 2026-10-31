@@ -1,0 +1,387 @@
+name: W2 exact 30-district location and calibration gates
+
+run-name: W2 exact validation — ${{ github.ref_name }}
+
+on:
+  push:
+    branches:
+      - wip/p2-tests
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: w2-locate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: W2 smoke — Nyarugenge and Nyamasheke
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Preflight public Supabase secrets (no service-role key)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${NEXT_PUBLIC_SUPABASE_URL:-}" ]]; then
+            echo "::error::Missing repository secret NEXT_PUBLIC_SUPABASE_URL"
+            exit 1
+          fi
+          if [[ -z "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ]]; then
+            echo "::error::Missing repository secret NEXT_PUBLIC_SUPABASE_ANON_KEY"
+            exit 1
+          fi
+          case "$NEXT_PUBLIC_SUPABASE_URL" in
+            https://*.supabase.co) ;;
+            *) echo "::error::NEXT_PUBLIC_SUPABASE_URL must be an HTTPS Supabase project URL"; exit 1 ;;
+          esac
+          echo "Preflight PASS: only public Supabase URL and anon key are required."
+
+      - name: Install application dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Next.js
+        run: npm run build
+
+      - name: Start Next.js and verify public config
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p smoke-output
+          npm run start > /tmp/iwacu-smoke-next.log 2>&1 &
+          echo $! > /tmp/iwacu-smoke-next.pid
+          for attempt in $(seq 1 90); do
+            if curl --silent --fail http://127.0.0.1:3000/api/health > /tmp/iwacu-smoke-health.json; then
+              node -e '
+                const h = require("/tmp/iwacu-smoke-health.json");
+                if (h.checks?.["env:NEXT_PUBLIC_SUPABASE_URL"] !== "ok" ||
+                    h.checks?.["env:NEXT_PUBLIC_SUPABASE_ANON_KEY"] !== "ok") {
+                  console.error(JSON.stringify(h, null, 2));
+                  process.exit(1);
+                }
+                console.log("Health check PASS: public URL and anon key available.");
+              '
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::next start failed health check"
+          sed -n '1,40p' /tmp/iwacu-smoke-next.log
+          exit 1
+
+      - name: Smoke — Nyarugenge (two seeds, seven radii)
+        continue-on-error: true
+        env:
+          W2_DISTRICT_CODE: RW-P1-D11
+          W2_DISTRICT_NAME: Nyarugenge
+          W2_MODE: smoke
+          W2_OUTPUT_DIR: smoke-output
+        run: node scripts/w2-run-district.mjs
+
+      - name: Smoke — Nyamasheke (two seeds, seven radii)
+        continue-on-error: true
+        env:
+          W2_DISTRICT_CODE: RW-P3-D37
+          W2_DISTRICT_NAME: Nyamasheke
+          W2_MODE: smoke
+          W2_OUTPUT_DIR: smoke-output
+        run: node scripts/w2-run-district.mjs
+
+      - name: Enforce smoke report
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p smoke-output smoke-report
+          node scripts/w2-aggregate.mjs --mode smoke --input smoke-output --output smoke-report
+
+      - name: Upload smoke observations and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w2-smoke-raw
+          path: |
+            smoke-output/
+            smoke-report/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop smoke Next.js
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f /tmp/iwacu-smoke-next.pid ]]; then
+            kill "$(cat /tmp/iwacu-smoke-next.pid)" 2>/dev/null || true
+          fi
+
+  district-tests:
+    name: ${{ matrix.district_name }} (${{ matrix.district_code }})
+    needs:
+      - smoke
+    if: ${{ needs.smoke.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - district_code: RW-P1-D11
+            district_name: Nyarugenge
+          - district_code: RW-P1-D12
+            district_name: Gasabo
+          - district_code: RW-P1-D13
+            district_name: Kicukiro
+          - district_code: RW-P2-D21
+            district_name: Nyanza
+          - district_code: RW-P2-D22
+            district_name: Gisagara
+          - district_code: RW-P2-D23
+            district_name: Nyaruguru
+          - district_code: RW-P2-D24
+            district_name: Huye
+          - district_code: RW-P2-D25
+            district_name: Nyamagabe
+          - district_code: RW-P2-D26
+            district_name: Ruhango
+          - district_code: RW-P2-D27
+            district_name: Muhanga
+          - district_code: RW-P2-D28
+            district_name: Kamonyi
+          - district_code: RW-P3-D31
+            district_name: Karongi
+          - district_code: RW-P3-D32
+            district_name: Rutsiro
+          - district_code: RW-P3-D33
+            district_name: Rubavu
+          - district_code: RW-P3-D34
+            district_name: Nyabihu
+          - district_code: RW-P3-D35
+            district_name: Ngororero
+          - district_code: RW-P3-D36
+            district_name: Rusizi
+          - district_code: RW-P3-D37
+            district_name: Nyamasheke
+          - district_code: RW-P4-D41
+            district_name: Rulindo
+          - district_code: RW-P4-D42
+            district_name: Gakenke
+          - district_code: RW-P4-D43
+            district_name: Musanze
+          - district_code: RW-P4-D44
+            district_name: Burera
+          - district_code: RW-P4-D45
+            district_name: Gicumbi
+          - district_code: RW-P5-D51
+            district_name: Rwamagana
+          - district_code: RW-P5-D52
+            district_name: Nyagatare
+          - district_code: RW-P5-D53
+            district_name: Gatsibo
+          - district_code: RW-P5-D54
+            district_name: Kayonza
+          - district_code: RW-P5-D55
+            district_name: Kirehe
+          - district_code: RW-P5-D56
+            district_name: Ngoma
+          - district_code: RW-P5-D57
+            district_name: Bugesera
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      W2_DISTRICT_CODE: ${{ matrix.district_code }}
+      W2_DISTRICT_NAME: ${{ matrix.district_name }}
+      W2_MODE: full
+      W2_OUTPUT_DIR: district-output
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Preflight public Supabase secrets (no service-role key)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${NEXT_PUBLIC_SUPABASE_URL:-}" ]]; then
+            echo "::error::Missing repository secret NEXT_PUBLIC_SUPABASE_URL"
+            exit 1
+          fi
+          if [[ -z "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ]]; then
+            echo "::error::Missing repository secret NEXT_PUBLIC_SUPABASE_ANON_KEY"
+            exit 1
+          fi
+          echo "District preflight PASS: public URL and anon key present; no service-role key."
+
+      - name: Install application dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Next.js
+        run: npm run build
+
+      - name: Start Next.js and verify public config
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p district-output
+          npm run start > /tmp/iwacu-district-next.log 2>&1 &
+          echo $! > /tmp/iwacu-district-next.pid
+          for attempt in $(seq 1 90); do
+            if curl --silent --fail http://127.0.0.1:3000/api/health > /tmp/iwacu-district-health.json; then
+              node -e '
+                const h = require("/tmp/iwacu-district-health.json");
+                if (h.checks?.["env:NEXT_PUBLIC_SUPABASE_URL"] !== "ok" ||
+                    h.checks?.["env:NEXT_PUBLIC_SUPABASE_ANON_KEY"] !== "ok") {
+                  console.error(JSON.stringify(h, null, 2));
+                  process.exit(1);
+                }
+                console.log("Health check PASS.");
+              '
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::next start failed health check"
+          sed -n '1,40p' /tmp/iwacu-district-next.log
+          exit 1
+
+      - name: Run district — both seeds, all seven exact-radius noise levels, HTTP /api/locate
+        run: node scripts/w2-run-district.mjs
+
+      - name: Upload district raw observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: district-${{ matrix.district_code }}
+          path: district-output/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop district Next.js
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f /tmp/iwacu-district-next.pid ]]; then
+            kill "$(cat /tmp/iwacu-district-next.pid)" 2>/dev/null || true
+          fi
+
+  aggregate:
+    name: W2 national special points, ECE, B1-B4 and report
+    needs:
+      - smoke
+      - district-tests
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Download smoke artifact
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: w2-smoke-raw
+          path: smoke-artifacts
+
+      - name: Download all available district artifacts
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: district-*
+          path: district-artifacts
+          merge-multiple: true
+
+      - name: Install dependencies for national special tests
+        if: ${{ needs.smoke.result == 'success' && needs.district-tests.result == 'success' }}
+        run: npm install --no-audit --no-fund
+
+      - name: Build Next.js for Kivu, outside and map-vs-locate tests
+        if: ${{ needs.smoke.result == 'success' && needs.district-tests.result == 'success' }}
+        run: npm run build
+
+      - name: Start Next.js for national special tests
+        if: ${{ needs.smoke.result == 'success' && needs.district-tests.result == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p w2-results
+          npm run start > /tmp/iwacu-national-next.log 2>&1 &
+          echo $! > /tmp/iwacu-national-next.pid
+          for attempt in $(seq 1 90); do
+            if curl --silent --fail http://127.0.0.1:3000/api/health > /tmp/iwacu-national-health.json; then
+              node -e '
+                const h = require("/tmp/iwacu-national-health.json");
+                if (h.checks?.["env:NEXT_PUBLIC_SUPABASE_URL"] !== "ok" ||
+                    h.checks?.["env:NEXT_PUBLIC_SUPABASE_ANON_KEY"] !== "ok") process.exit(1);
+                console.log("National special-test server ready.");
+              '
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::National special-test Next.js server did not start"
+          sed -n '1,40p' /tmp/iwacu-national-next.log
+          exit 1
+
+      - name: Run Kivu lakeshore, 200 outside points and 210 map-vs-locate points
+        if: ${{ needs.smoke.result == 'success' && needs.district-tests.result == 'success' }}
+        run: node scripts/w2-run-national-special.mjs
+
+      - name: Produce exact-gate metrics, calibration proposal and report
+        if: always()
+        env:
+          W2_MODE: ${{ needs.smoke.result == 'success' && 'full' || 'smoke' }}
+          W2_OUTPUT_DIR: w2-results
+          W2_DISTRICT_RESULTS_DIR: district-artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p w2-results
+          if [[ "$W2_MODE" == "full" ]]; then
+            node scripts/w2-aggregate.mjs --mode full --input district-artifacts --output w2-results
+          else
+            node scripts/w2-aggregate.mjs --mode smoke --input smoke-artifacts/smoke-output --output w2-results
+          fi
+
+      - name: Upload metrics, CSV tables, calibration proposal and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w2-final-report
+          path: w2-results/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop national Next.js
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f /tmp/iwacu-national-next.pid ]]; then
+            kill "$(cat /tmp/iwacu-national-next.pid)" 2>/dev/null || true
+          fi
