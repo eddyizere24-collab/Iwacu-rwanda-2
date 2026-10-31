@@ -218,6 +218,9 @@ async function main() {
   if (!/^https:\/\/[a-zA-Z0-9.-]+(?::\d+)?$/.test(SUPABASE_URL)) {
     fail("NEXT_PUBLIC_SUPABASE_URL must be an HTTPS origin without a path.");
   }
+  if (new URL(SUPABASE_URL).hostname !== "buexgewxypvkqmphvfec.supabase.co") {
+    fail("Refusing to call a Supabase project other than the authorized project.");
+  }
 
   const byDistrict = [];
   for (const district of DISTRICTS) {
