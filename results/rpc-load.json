@@ -1,0 +1,17 @@
+{
+  "status": "ERROR",
+  "generated_at": "2026-10-31T15:51:20.506Z",
+  "github": {
+    "run_id": "41216772842",
+    "run_attempt": "1",
+    "sha": "40d62a7ad29d2568a1e8dcb513d8379fd15475f4",
+    "ref": "refs/heads/wip/p2-tests"
+  },
+  "concurrency": {
+    "workers": 6
+  },
+  "error": "RPC_LOAD_FATAL Error: Truth-sample read failed: district=RW-P1-D11 seed=424242 http=network body=timeout\n    at fail (file:///home/runner/work/Iwacu-rwanda-2/Iwacu-rwanda-2/scripts/rpc-load.mjs:26:9)\n    at fetchTruthSamples (file:///home/runner/work/Iwacu-rwanda-2/Iwacu-rwanda-2/scripts/rpc-load.mjs:96:7)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async main (file:///home/runner/work/Iwacu-rwanda-2/Iwacu-rwanda-2/scripts/rpc-load.mjs:237:18)",
+  "raw_output": [
+    "RPC_LOAD_FATAL Error: Truth-sample read failed: district=RW-P1-D11 seed=424242 http=network body=timeout\n    at fail (file:///home/runner/work/Iwacu-rwanda-2/Iwacu-rwanda-2/scripts/rpc-load.mjs:26:9)\n    at fetchTruthSamples (file:///home/runner/work/Iwacu-rwanda-2/Iwacu-rwanda-2/scripts/rpc-load.mjs:96:7)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async main (file:///home/runner/work/Iwacu-rwanda-2/Iwacu-rwanda-2/scripts/rpc-load.mjs:237:18)"
+  ]
+}\n
