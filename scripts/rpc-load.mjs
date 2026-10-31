@@ -88,15 +88,26 @@ async function fetchTruthSamples(district) {
       order: "idx.asc",
       limit: "5",
     });
-    const response = await timedRequest(`${REST_URL}/w2_truth_samples?${params}`, {
-      method: "GET",
-      headers: headers(),
-    });
-    if (!response.ok || !Array.isArray(response.data)) {
+    let response;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      response = await timedRequest(`${REST_URL}/w2_truth_samples?${params}`, {
+        method: "GET",
+        headers: headers(),
+      });
+      if (response.ok && Array.isArray(response.data)) break;
+      const transient = response.timedOut || response.status === null || response.status >= 500;
+      if (attempt < 2 && transient) {
+        emit(`TRUTH_SAMPLE_RETRY district=${district.code} seed=${seed} attempt=${attempt} reason=${response.networkError || response.status}`);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
+      }
       fail(
         `Truth-sample read failed: district=${district.code} seed=${seed} ` +
         `http=${response.status ?? "network"} body=${response.raw || response.networkError}`
       );
+    }
+    if (!response?.ok || !Array.isArray(response.data)) {
+      fail(`Truth-sample read failed after retry: district=${district.code} seed=${seed}`);
     }
     if (response.data.length !== 5) {
       fail(
@@ -362,7 +373,7 @@ async function main() {
   };
   emit(`RESULT_JSON ${JSON.stringify(result)}`);
   await mkdir("results", { recursive: true });
-  await writeFile("results/rpc-load.json", JSON.stringify(result, null, 2) + "\\n", "utf8");
+  await writeFile("results/rpc-load.json", JSON.stringify(result, null, 2), "utf8");
 
   if (!targetsMet) process.exitCode = 2;
 }
@@ -386,7 +397,7 @@ main().catch(async (error) => {
       error: message,
       raw_output: [...rawOutput]
     };
-    await writeFile("results/rpc-load.json", JSON.stringify(failure, null, 2) + "\\n", "utf8");
+    await writeFile("results/rpc-load.json", JSON.stringify(failure, null, 2), "utf8");
   } catch (writeError) {
     console.error(`RPC_LOAD_RESULT_WRITE_FATAL ${writeError?.message || writeError}`);
   }

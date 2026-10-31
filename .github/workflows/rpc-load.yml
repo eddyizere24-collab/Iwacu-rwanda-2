@@ -57,7 +57,7 @@ jobs:
           '
           echo "Preflight PASS: authorized project origin and public anon credential are present."
 
-      - name: Run six-worker v2 RPC load test and serial v1 comparison
+      - name: Run six-worker v2 RPC load test and bounded v1 comparison
         id: load_test
         continue-on-error: true
         run: node scripts/rpc-load.mjs
@@ -83,6 +83,7 @@ jobs:
             await writeFile("results/rpc-load.json", JSON.stringify(record, null, 2) + "\n");
             NODE
           fi
+          test -s results/rpc-load.json
 
       - name: Checkout results branch
         if: always()
