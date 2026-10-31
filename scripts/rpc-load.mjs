@@ -152,16 +152,24 @@ function percentile(values, fraction) {
   return Number(sorted[index].toFixed(2));
 }
 
-async function runV1Serial(points) {
+async function runV1Baseline(points) {
+  const jobs = points.flatMap((point) =>
+    RADII_M.filter((radius) => radius <= 100).map((radius) => ({ point, radius }))
+  );
   const results = new Map();
+  let cursor = 0;
   let http5xx = 0;
   let timeouts = 0;
   let otherErrors = 0;
-  let requests = 0;
 
-  for (const point of points) {
-    for (const radius of RADII_M.filter((value) => value <= 100)) {
-      requests += 1;
+  // Bound the comparison phase to the same six-worker ceiling; this keeps
+  // the reference pass from consuming the full workflow timeout.
+  const worker = async () => {
+    while (true) {
+      const jobIndex = cursor;
+      cursor += 1;
+      if (jobIndex >= jobs.length) return;
+      const { point, radius } = jobs[jobIndex];
       const response = await callRpc("calculate_location_confidence", point, radius);
       if (response.status >= 500) http5xx += 1;
       else if (response.timedOut) timeouts += 1;
@@ -172,9 +180,11 @@ async function runV1Serial(points) {
         timedOut: response.timedOut,
       });
     }
-  }
+  };
+
+  await Promise.all(Array.from({ length: WORKERS }, () => worker()));
   emit(
-    `V1_SERIAL requests=${requests} http_5xx=${http5xx} ` +
+    `V1_BASELINE workers=${WORKERS} requests=${jobs.length} http_5xx=${http5xx} ` +
     `timeouts=${timeouts} other_http_errors=${otherErrors}`
   );
   return results;
@@ -236,8 +246,8 @@ async function main() {
     fail(`Expected 30 points (10 per district); got ${points.length}.`);
   }
 
-  // v1 is deliberately serial so it supplies a non-concurrent baseline.
-  const v1 = await runV1Serial(points);
+  // V1 is a bounded six-worker reference pass; V2 is measured separately below.
+  const v1 = await runV1Baseline(points);
 
   // Exactly six worker loops run concurrently against the v2 RPC endpoint.
   const v2Results = await runV2Concurrent(points);
