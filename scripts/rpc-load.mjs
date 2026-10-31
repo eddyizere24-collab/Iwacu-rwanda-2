@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { mkdir, writeFile } from "node:fs/promises";
 
 const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
 const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -13,6 +14,13 @@ const RADII_M = [0, 20, 100, 500, 2000, 5000, 20000];
 const WORKERS = 6;
 const REQUEST_TIMEOUT_MS = 15_000;
 const SELECT = "lng,lat,district_scope_code,seed,idx,true_village_scope_code";
+
+const rawOutput = [];
+
+function emit(message) {
+  console.log(message);
+  rawOutput.push(message);
+}
 
 function fail(message) {
   throw new Error(message);
@@ -165,7 +173,7 @@ async function runV1Serial(points) {
       });
     }
   }
-  console.log(
+  emit(
     `V1_SERIAL requests=${requests} http_5xx=${http5xx} ` +
     `timeouts=${timeouts} other_http_errors=${otherErrors}`
   );
@@ -215,7 +223,7 @@ async function main() {
   for (const district of DISTRICTS) {
     const rows = await fetchTruthSamples(district);
     byDistrict.push(...rows);
-    console.log(
+    emit(
       `TRUTH_SAMPLES district=${district.name} code=${district.code} ` +
       `count=${rows.length} seeds=${SEEDS.join(",")}`
     );
@@ -256,7 +264,7 @@ async function main() {
       other_http_errors: otherHttpErrors,
     };
     summary.push(row);
-    console.log(
+    emit(
       `V2_LOAD radius_m=${radius} requests=${row.requests} responses=${row.responses} ` +
       `p50_ms=${row.p50_ms ?? "NA"} p95_ms=${row.p95_ms ?? "NA"} ` +
       `max_ms=${row.max_ms ?? "NA"} http_5xx=${http5xx} ` +
@@ -276,7 +284,7 @@ async function main() {
     return Boolean(row.top1 && baseline?.top1);
   }).length;
 
-  console.log(
+  emit(
     `TOP1_AGREEMENT radius_m_le_100 matches=${matches}/${expectedComparisons} ` +
     `agreement_pct=${agreementPct.toFixed(2)} missing_pairs=${missingComparisons}`
   );
@@ -288,18 +296,86 @@ async function main() {
   const agreementAtLeast98 = agreementPct >= 98;
   const targetsMet = allP95Under300 && zeroTimeouts && agreementAtLeast98;
 
-  console.log(
+  emit(
     `TARGETS p95_lt_300ms=${allP95Under300 ? "PASS" : "FAIL"} ` +
     `zero_timeouts=${zeroTimeouts ? "PASS" : "FAIL"} ` +
     `top1_agreement_ge_98pct=${agreementAtLeast98 ? "PASS" : "FAIL"} ` +
     `OVERALL=${targetsMet ? "PASS" : "FAIL"}`
   );
-  console.log(`RESULT_JSON ${JSON.stringify({ workers: WORKERS, truth_points: points.length, summary, top1_agreement: { matches, expected: expectedComparisons, pct: Number(agreementPct.toFixed(2)), missing: missingComparisons }, targets_met: targetsMet })}`);
+  const allLatencies = v2Results
+    .filter((row) => row.status !== null)
+    .map((row) => row.durationMs);
+  const total5xx = summary.reduce((sum, row) => sum + row.http_5xx, 0);
+  const totalTimeouts = summary.reduce((sum, row) => sum + row.timeouts, 0);
+  const totalOtherHttpErrors = summary.reduce((sum, row) => sum + row.other_http_errors, 0);
+  const result = {
+    status: targetsMet ? "PASS" : "FAIL",
+    generated_at: new Date().toISOString(),
+    github: {
+      run_id: process.env.GITHUB_RUN_ID || null,
+      run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+      sha: process.env.GITHUB_SHA || null,
+      ref: process.env.GITHUB_REF || null
+    },
+    concurrency: { workers: WORKERS },
+    truth_points: points.length,
+    overall: {
+      requests: v2Results.length,
+      responses: allLatencies.length,
+      p50_ms: percentile(allLatencies, 0.5),
+      p95_ms: percentile(allLatencies, 0.95),
+      max_ms: allLatencies.length ? Number(Math.max(...allLatencies).toFixed(2)) : null
+    },
+    by_radius: summary,
+    errors: {
+      http_5xx: total5xx,
+      timeouts: totalTimeouts,
+      other_http_errors: totalOtherHttpErrors
+    },
+    top1_agreement: {
+      radius_m_lte_100: true,
+      matches,
+      expected: expectedComparisons,
+      pct: Number(agreementPct.toFixed(2)),
+      missing: missingComparisons
+    },
+    targets: {
+      p95_lt_300ms: allP95Under300,
+      zero_timeouts: zeroTimeouts,
+      top1_agreement_ge_98pct: agreementAtLeast98
+    },
+    targets_met: targetsMet,
+    raw_output: [...rawOutput]
+  };
+  emit(`RESULT_JSON ${JSON.stringify(result)}`);
+  await mkdir("results", { recursive: true });
+  await writeFile("results/rpc-load.json", JSON.stringify(result, null, 2) + "\\n", "utf8");
 
   if (!targetsMet) process.exitCode = 2;
 }
 
-main().catch((error) => {
-  console.error(`RPC_LOAD_FATAL ${error?.stack || error}`);
+main().catch(async (error) => {
+  const message = `RPC_LOAD_FATAL ${error?.stack || error}`;
+  console.error(message);
+  rawOutput.push(message);
+  try {
+    await mkdir("results", { recursive: true });
+    const failure = {
+      status: "ERROR",
+      generated_at: new Date().toISOString(),
+      github: {
+        run_id: process.env.GITHUB_RUN_ID || null,
+        run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+        sha: process.env.GITHUB_SHA || null,
+        ref: process.env.GITHUB_REF || null
+      },
+      concurrency: { workers: WORKERS },
+      error: message,
+      raw_output: [...rawOutput]
+    };
+    await writeFile("results/rpc-load.json", JSON.stringify(failure, null, 2) + "\\n", "utf8");
+  } catch (writeError) {
+    console.error(`RPC_LOAD_RESULT_WRITE_FATAL ${writeError?.message || writeError}`);
+  }
   process.exitCode = 1;
 });

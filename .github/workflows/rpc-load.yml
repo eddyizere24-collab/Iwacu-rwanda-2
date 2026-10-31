@@ -1,10 +1,20 @@
 name: RPC v2 six-worker load test
 
 on:
+  push:
+    branches:
+      - wip/p2-tests
+    paths:
+      - .github/workflows/rpc-load.yml
+      - scripts/rpc-load.mjs
   workflow_dispatch:
 
+concurrency:
+  group: rpc-load-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   rpc-load:
@@ -15,15 +25,18 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
     steps:
-      - name: Checkout
+      - name: Checkout test branch
         uses: actions/checkout@v4
+        with:
+          ref: wip/p2-tests
+          token: ${{ github.token }}
 
       - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
           node-version: 24
 
-      - name: Preflight public Supabase credentials
+      - name: Preflight authorized public Supabase credentials
         shell: bash
         run: |
           set -euo pipefail
@@ -35,7 +48,81 @@ jobs:
             echo "::error::Missing NEXT_PUBLIC_SUPABASE_ANON_KEY secret"
             exit 1
           }
-          echo "Preflight PASS: only public URL and anon key are used."
+          node --input-type=module -e '
+            const u = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL);
+            if (u.protocol !== "https:" || u.hostname !== "buexgewxypvkqmphvfec.supabase.co" || u.pathname !== "/" || u.search || u.hash) {
+              console.error("::error::Refusing RPC load: URL is not the authorized Supabase project origin.");
+              process.exit(1);
+            }
+          '
+          echo "Preflight PASS: authorized project origin and public anon credential are present."
 
       - name: Run six-worker v2 RPC load test and serial v1 comparison
+        id: load_test
+        continue-on-error: true
         run: node scripts/rpc-load.mjs
+
+      - name: Ensure a result record exists
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -s results/rpc-load.json ]]; then
+            mkdir -p results
+            node --input-type=module <<'NODE'
+            import { writeFile } from "node:fs/promises";
+            const record = {
+              status: "INCOMPLETE",
+              generated_at: new Date().toISOString(),
+              github: {
+                run_id: process.env.GITHUB_RUN_ID,
+                sha: process.env.GITHUB_SHA
+              },
+              reason: "The load runner did not produce a result file; inspect workflow job status."
+            };
+            await writeFile("results/rpc-load.json", JSON.stringify(record, null, 2) + "\n");
+            NODE
+          fi
+
+      - name: Checkout results branch
+        if: always()
+        uses: actions/checkout@v4
+        with:
+          ref: wip/p2-results
+          path: results-branch
+          token: ${{ github.token }}
+          fetch-depth: 0
+
+      - name: Commit results to wip/p2-results
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d results-branch/.git
+          mkdir -p results-branch/results
+          cp results/rpc-load.json results-branch/results/rpc-load.json
+          cd results-branch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/rpc-load.json
+          if git diff --cached --quiet; then
+            echo "Results file is unchanged; no commit required."
+            exit 0
+          fi
+          git commit -m "test: record RPC load results (run ${GITHUB_RUN_ID})"
+          git push origin HEAD:wip/p2-results
+
+      - name: Enforce RPC load targets
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises";
+          const result = JSON.parse(await readFile("results/rpc-load.json", "utf8"));
+          if (result.status !== "PASS" || result.targets_met !== true) {
+            console.error("RPC load targets failed or the run was incomplete. See wip/p2-results:results/rpc-load.json.");
+            process.exit(1);
+          }
+          console.log("RPC load targets PASS.");
+          NODE
