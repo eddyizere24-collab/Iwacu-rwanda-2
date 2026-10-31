@@ -56,7 +56,7 @@ function classify(tags: Record<string, string>): NearbyFeature["category"] | nul
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!isLandmarksFeatureEnabled()) {
-    return NextResponse.json({ status: "disabled", features: [], source: null }, { status: 200 });
+    return NextResponse.json({ disabled: true, status: "disabled", features: [], source: null }, { status: 200 });
   }
   let body: unknown;
   try {

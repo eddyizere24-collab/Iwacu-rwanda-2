@@ -83,6 +83,9 @@ export function NearbyLandmarks({
     item.category !== "wetland" && item.category !== "water" && item.category !== "lake"
   );
 
+  // Feature OFF means the whole landmarks component is absent from the UI.
+  if (!isLandmarksFeatureEnabled()) return null;
+
   return (
     <section className="rounded-2xl border border-border bg-card p-4 text-left">
       <button
