@@ -28,8 +28,22 @@ export interface LocateRequest {
 
 export interface LocateSuccess {
   status: "success";
+  level?: "country" | "province" | "district" | "sector" | "cell" | "village";
+  path?: {
+    intara?: string;
+    akarere?: string;
+    umurenge?: string;
+    akagari?: string;
+    umudugudu?: string;
+  };
+  per_level_candidates?: Partial<Record<"province" | "district" | "sector" | "cell" | "village", ConfidenceMatch[]>>;
+  top3_villages?: ConfidenceMatch[];
+  signals_used?: string[];
+  flags?: string[];
+  dataset_version?: string;
   matches: ConfidenceMatch[];   // sorted by confidence DESC
   hierarchy: {
+    country?: ConfidenceMatch;
     province?: ConfidenceMatch;
     village?: ConfidenceMatch;
     cell?: ConfidenceMatch;
@@ -37,8 +51,21 @@ export interface LocateSuccess {
     district?: ConfidenceMatch;
   };
   leaders: LeaderPublic[];
-  source: "gps" | "ip" | "manual" | "offline" | "nearest" | "map";
+  source: "gps" | "network" | "ip" | "manual" | "offline" | "nearest" | "map" | "last-known" | "prior";
   warning?: string;
+  /** Device-reported uncertainty radius, inflated for stale fixes when applicable. */
+  accuracy_m?: number;
+  /** WGS84 point that produced the answer, when a measured coordinate exists. */
+  latitude?: number;
+  longitude?: number;
+  /** Age of the underlying device fix at the time it was submitted. */
+  fix_age_ms?: number;
+  /** Time from starting the location attempt to receiving this answer (milliseconds). */
+  elapsed_ms?: number;
+  /** Git commit serving the response, when supplied by the hosting platform. */
+  commit_sha?: string;
+  /** Candidate shares aggregated by administrative level; geometric shares, not calibrated probabilities. */
+  hierarchyCandidates?: Partial<Record<"province" | "district" | "sector" | "cell" | "village", ConfidenceMatch[]>>;
 }
 
 export interface LocateError {
@@ -49,4 +76,10 @@ export interface LocateError {
   details?: Record<string, unknown>;
 }
 
-export type LocateResponse = LocateSuccess | LocateError;
+export interface LocateOutside {
+  status: "outside";
+  outside_rwanda: true;
+  distance_to_border_m: number | null;
+}
+
+export type LocateResponse = LocateSuccess | LocateError | LocateOutside;

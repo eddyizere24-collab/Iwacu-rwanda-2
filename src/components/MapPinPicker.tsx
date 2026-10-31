@@ -55,8 +55,10 @@ function loadLeaflet(): Promise<any> {
 
 export function MapPinPicker({
   onSelect,
+  initialPoint = null,
 }: {
   onSelect: (latitude: number, longitude: number, accuracyMeters: number) => void;
+  initialPoint?: Point | null;
 }) {
   const [open, setOpen] = useState(false);
   const [mapStatus, setMapStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -76,12 +78,47 @@ export function MapPinPicker({
 
     loadLeaflet().then((L) => {
       if (cancelled || !containerRef.current || mapRef.current) return;
+      let lastKnown: { latitude: number; longitude: number } | null = null;
+      try {
+        const raw = localStorage.getItem("iwacu-last-location-fix");
+        if (raw) {
+          const saved = JSON.parse(raw) as {
+            latitude?: number;
+            longitude?: number;
+            recordedAt?: number;
+          };
+          const age = Number.isFinite(saved.recordedAt) ? Date.now() - (saved.recordedAt as number) : Infinity;
+          if (
+            Number.isFinite(saved.latitude) &&
+            Number.isFinite(saved.longitude) &&
+            age >= 0 &&
+            age <= 24 * 60 * 60 * 1000
+          ) {
+            lastKnown = {
+              latitude: saved.latitude as number,
+              longitude: saved.longitude as number,
+            };
+          }
+        }
+      } catch {
+        // The map can still open at the Rwanda overview without browser storage.
+      }
+
+      const estimatedPoint = initialPoint &&
+        Number.isFinite(initialPoint.latitude) &&
+        Number.isFinite(initialPoint.longitude)
+        ? initialPoint
+        : null;
+      const mapStart = estimatedPoint ?? lastKnown;
+      const initialCenter = mapStart
+        ? [mapStart.latitude, mapStart.longitude] as [number, number]
+        : [-1.94, 29.87] as [number, number];
       const map = L.map(containerRef.current, {
         zoomControl: true,
         scrollWheelZoom: false,
         minZoom: 7,
         maxZoom: 18,
-      }).setView([-1.94, 29.87], 8);
+      }).setView(initialCenter, mapStart ? 14 : 8);
       mapRef.current = map;
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -102,6 +139,7 @@ export function MapPinPicker({
         }
       };
 
+      if (mapStart) updateMarker(mapStart.latitude, mapStart.longitude);
       map.on("click", (event: any) => updateMarker(event.latlng.lat, event.latlng.lng));
 
       const refreshOverlay = async () => {
@@ -141,15 +179,23 @@ export function MapPinPicker({
           overlayRef.current = L.geoJSON(geojson, {
             style: () => ({ color: "#20603D", weight: 1, opacity: 0.8, fillColor: "#48A868", fillOpacity: 0.06 }),
             onEachFeature: (feature: any, layer: any) => {
-              const name = feature?.properties?.village;
+              const name = feature?.properties?.name_kiny ?? feature?.properties?.village;
               if (typeof name === "string" && name.trim()) {
                 layer.bindTooltip(name, { sticky: true, direction: "top" });
               }
+              // A village polygon tap selects its centre. The confirmation button
+              // uses the same onSelect callback as a free map tap.
+              layer.on("click", () => {
+                const center = layer.getBounds?.().getCenter?.();
+                if (center && Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
+                  updateMarker(center.lat, center.lng);
+                }
+              });
             },
           }).addTo(currentMap);
           const count = Array.isArray(geojson.features) ? geojson.features.length : 0;
           setOverlayMessage(count > 0
-            ? `Imbibi z'imidugudu zagaragajwe: ${count}. Amakuru ashingiye ku ikarita ya NISR 2022.`
+            ? `Imbibi z'imidugudu zagaragajwe: ${count}. Amakuru y'imbibi yakuwe muri database.`
             : "Nta mbibi z'imidugudu zabonetse muri aka gace; gerageza kwegera cyangwa uhitemo ahandi.");
         } catch (error) {
           if (!controller.signal.aborted && !cancelled) {
@@ -181,7 +227,7 @@ export function MapPinPicker({
       markerRef.current = null;
       overlayRef.current = null;
     };
-  }, [open]);
+  }, [open, initialPoint?.latitude, initialPoint?.longitude]);
 
   function closeMap() {
     setOpen(false);
@@ -241,7 +287,7 @@ export function MapPinPicker({
             </div>
           )}
           <p className="mt-2 text-[10px] text-muted-foreground">
-            Amakarita: &copy; OpenStreetMap; imbibi z'imidugudu: NISR 2022. IP cyangwa GPS ishobora kwibeshya; genzura umudugudu mbere yo kuwemeza.
+            Amakarita: &copy; OpenStreetMap; imbibi z'imidugudu zivanwa muri database. IP cyangwa GPS ishobora kwibeshya; genzura umudugudu mbere yo kuwemeza.
           </p>
         </div>
       )}

@@ -1,17 +1,21 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, MapPin, Search } from "lucide-react";
+import { ChevronRight, MapPin, Search } from "lucide-react";
 
 type BoundaryLevel = "province" | "district" | "sector" | "cell" | "village";
 type Choice = {
+  id: string;
+  code: string;
   scope_code: string;
   name_kiny: string;
   name_eng: string | null;
   level: BoundaryLevel;
-  parent_scope_code: string | null;
+  parent_id: string | null;
 };
 type SavedVillage = { scope_code: string; name_kiny: string; confirmed_at?: string };
+type Crumb = { level: BoundaryLevel; parentId: string; label: string };
+type ApiResponse = { status: string; units?: Choice[] };
 
 const NEXT_LEVEL: Record<BoundaryLevel, BoundaryLevel | null> = {
   province: "district",
@@ -21,77 +25,70 @@ const NEXT_LEVEL: Record<BoundaryLevel, BoundaryLevel | null> = {
   village: null,
 };
 const LABEL: Record<BoundaryLevel, string> = {
-  province: "Intara / Umujyi",
+  province: "Intara 5 z'u Rwanda",
   district: "Akarere",
   sector: "Umurenge",
   cell: "Akagari",
   village: "Umudugudu",
 };
-let indexPromise: Promise<Choice[]> | null = null;
-
-function decodeLocationIndex(payload: unknown): Choice[] {
-  if (!payload || typeof payload !== "object") throw new Error("index_invalid");
-  const data = payload as { status?: unknown; choices?: unknown };
-  if (!Array.isArray(data.choices)) throw new Error("index_invalid");
-
-  // The shipped offline file stores rows as compact arrays to save mobile data;
-  // the online fallback API returns objects for compatibility.
-  const choices = data.choices.map((row): Choice => {
-    if (Array.isArray(row) && row.length >= 5) {
-      return {
-        scope_code: String(row[0]),
-        name_kiny: String(row[1]),
-        name_eng: row[2] == null ? null : String(row[2]),
-        level: row[3] as BoundaryLevel,
-        parent_scope_code: row[4] == null ? null : String(row[4]),
-      };
-    }
-    if (row && typeof row === "object") return row as Choice;
-    throw new Error("index_row_invalid");
-  });
-
-  const allowed = new Set<BoundaryLevel>(["province", "district", "sector", "cell", "village"]);
-  if (choices.some((choice) => !allowed.has(choice.level) || !choice.scope_code || !choice.name_kiny)) {
-    throw new Error("index_row_invalid");
-  }
-  return choices;
-}
-
-async function fetchLocationIndex(): Promise<Choice[]> {
-  if (!indexPromise) {
-    indexPromise = (async () => {
-      // Shipped compact index is available offline even before a user has made
-      // a successful location request. The API remains a freshness fallback.
-      try {
-        const staticResponse = await fetch("/offline/location-index.json", { cache: "force-cache" });
-        if (staticResponse.ok) {
-          return decodeLocationIndex(await staticResponse.json());
-        }
-      } catch {
-        // Try the online index below.
-      }
-
-      const response = await fetch("/api/locate?index=1", { cache: "no-store" });
-      if (!response.ok) throw new Error("index_unavailable");
-      return decodeLocationIndex(await response.json());
-    })().catch((error) => {
-      indexPromise = null;
-      throw error;
-    });
-  }
-  return indexPromise;
-}
+const CACHE_PREFIX = "iwacu-db-picker-v4:";
 
 function normalizeName(value: string): string {
   return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase();
 }
+function cacheKey(level: BoundaryLevel, parentId: string, query: string): string {
+  return CACHE_PREFIX + level + ":" + (parentId || "root") + ":" + normalizeName(query);
+}
+function readCache(key: string): Choice[] | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as unknown;
+    return Array.isArray(value) ? value as Choice[] : null;
+  } catch {
+    return null;
+  }
+}
+function writeCache(key: string, value: Choice[]) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage may be disabled */ }
+}
+async function loadChoices(level: BoundaryLevel, parentId: string, query: string): Promise<Choice[]> {
+  const key = cacheKey(level, parentId, query);
+  const cached = readCache(key);
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return cached ?? [];
+
+  const params = new URLSearchParams({ level });
+  if (parentId) params.set("parent_id", parentId);
+  if (query.trim()) params.set("q", query.trim());
+  try {
+    const response = await fetch("/api/administrative-units?" + params.toString(), {
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error("database_picker_unavailable");
+    const payload = await response.json() as ApiResponse;
+    if (payload.status !== "success" || !Array.isArray(payload.units)) {
+      throw new Error("database_picker_unavailable");
+    }
+    const valid = payload.units.filter((item) =>
+      item && item.id && item.scope_code && item.name_kiny && item.level === level &&
+      (level === "province" || item.parent_id === parentId)
+    );
+    writeCache(key, valid);
+    return valid;
+  } catch {
+    return cached ?? [];
+  }
+}
 
 export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => void }) {
   const [level, setLevel] = useState<BoundaryLevel>("province");
-  const [parentScopeCode, setParentScopeCode] = useState("");
-  const [history, setHistory] = useState<Array<{ level: BoundaryLevel; parentScopeCode: string }>>([]);
+  const [parentId, setParentId] = useState("");
+  const [history, setHistory] = useState<Array<{ level: BoundaryLevel; parentId: string; crumbs: Crumb[] }>>([]);
+  const [crumbs, setCrumbs] = useState<Crumb[]>([
+    { level: "province", parentId: "", label: "Intara" },
+  ]);
   const [query, setQuery] = useState("");
-  const [allChoices, setAllChoices] = useState<Choice[]>([]);
+  const [visibleChoices, setVisibleChoices] = useState<Choice[]>([]);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const [lastVillage, setLastVillage] = useState<SavedVillage | null>(null);
@@ -101,88 +98,91 @@ export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => v
     try {
       const saved = localStorage.getItem("iwacu-confirmed-village");
       if (saved) setLastVillage(JSON.parse(saved) as SavedVillage);
-    } catch {
-      // Storage may be disabled.
+    } catch { /* storage may be disabled */ }
+
+    const key = cacheKey(level, parentId, query);
+    const cached = readCache(key);
+    if (cached) {
+      setVisibleChoices(cached);
+      setBusy(false);
+      setMessage("");
+    } else {
+      setVisibleChoices([]);
+      setBusy(true);
     }
-    fetchLocationIndex()
+
+    loadChoices(level, parentId, query)
       .then((choices) => {
-        if (!cancelled) {
-          setAllChoices(choices);
-          setMessage("");
-        }
+        if (cancelled) return;
+        setVisibleChoices(choices);
+        setMessage("");
       })
       .catch(() => {
-        if (!cancelled) {
-          setMessage("Nta rutonde rwabitswe kuri telefone. Huza interineti rimwe kugira ngo urutonde rw'imidugudu rubikwe.");
-        }
+        if (!cancelled) setMessage("Urutonde ntirubashije gufunguka. Ongera uhuze interineti.");
       })
-      .finally(() => {
-        if (!cancelled) setBusy(false);
-      });
+      .finally(() => { if (!cancelled) setBusy(false); });
     return () => { cancelled = true; };
-  }, []);
-
-  const visibleChoices = useMemo(() => {
-    if (!allChoices.length) return [];
-    if (query.trim()) {
-      const needle = normalizeName(query.trim());
-      return allChoices
-        .filter((choice) => choice.level === "village" && normalizeName(choice.name_kiny).includes(needle))
-        .sort((a, b) => a.name_kiny.localeCompare(b.name_kiny, "rw"))
-        .slice(0, 30);
-    }
-    return allChoices
-      .filter((choice) => choice.level === level)
-      .filter((choice) => level === "province"
-        ? !choice.parent_scope_code
-        : choice.parent_scope_code === parentScopeCode)
-      .sort((a, b) => a.name_kiny.localeCompare(b.name_kiny, "rw"));
-  }, [allChoices, level, parentScopeCode, query]);
+  }, [level, parentId, query]);
 
   function choose(choice: Choice) {
     if (choice.level === "village") {
       onSelect(choice.scope_code);
       return;
     }
-    setHistory((previous) => [...previous, { level, parentScopeCode }]);
-    setParentScopeCode(choice.scope_code);
-    setLevel(NEXT_LEVEL[choice.level] ?? "village");
+    const nextLevel = NEXT_LEVEL[choice.level];
+    if (!nextLevel) return;
+    setHistory((previous) => [...previous, { level, parentId, crumbs }]);
+    setParentId(choice.id);
+    setLevel(nextLevel);
+    setCrumbs((previous) => [...previous, {
+      level: nextLevel,
+      parentId: choice.id,
+      label: choice.name_kiny,
+    }]);
+    setQuery("");
   }
 
-  function goBack() {
-    setHistory((previous) => {
-      const last = previous[previous.length - 1];
-      if (!last) {
-        setLevel("province");
-        setParentScopeCode("");
-        return [];
-      }
-      setLevel(last.level);
-      setParentScopeCode(last.parentScopeCode);
-      return previous.slice(0, -1);
-    });
+  function goBackTo(index: number) {
+    const crumb = crumbs[index];
+    if (!crumb) return;
+    setLevel(crumb.level);
+    setParentId(crumb.parentId);
+    setCrumbs((previous) => previous.slice(0, index + 1));
+    setHistory((previous) => previous.slice(0, index));
+    setQuery("");
   }
 
-  const savedVillageIsKnown = lastVillage && allChoices.some(
-    (choice) => choice.level === "village" && choice.scope_code === lastVillage.scope_code
-  );
+  const savedVillageIsKnown = useMemo(() => Boolean(
+    lastVillage && visibleChoices.some(
+      (choice) => choice.level === "village" && choice.scope_code === lastVillage.scope_code
+    )
+  ), [lastVillage, visibleChoices]);
 
   return (
     <section className="rounded-2xl border border-border bg-card p-4 text-left shadow-sm">
       <div className="mb-3 flex items-center gap-2">
         <MapPin className="h-4 w-4 text-[#20603D]" aria-hidden />
-        <h2 className="text-sm font-bold">Hitamo cyangwa ushakishe umudugudu wawe</h2>
+        <h2 className="text-sm font-bold">Guhindura ahagaragajwe (Si hano?)</h2>
       </div>
+
+      <nav aria-label="Aho uri mu nzego z'ubuyobozi" className="mb-3 flex flex-wrap items-center gap-1 text-xs">
+        {crumbs.map((crumb, index) => (
+          <span key={crumb.level + ":" + index} className="inline-flex items-center gap-1">
+            {index > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground" aria-hidden />}
+            <button type="button" onClick={() => goBackTo(index)}
+              className="min-h-[32px] rounded-md px-1.5 font-semibold text-[#20603D] hover:bg-[#20603D]/5">
+              {crumb.label}
+            </button>
+          </span>
+        ))}
+      </nav>
 
       {savedVillageIsKnown && lastVillage && (
         <div className="mb-3 rounded-xl bg-emerald-500/10 p-3">
           <p className="text-xs text-muted-foreground">Umudugudu wari wemeje mbere</p>
           <p className="mt-1 text-sm font-semibold">{lastVillage.name_kiny}</p>
-          <button
-            type="button"
-            onClick={() => onSelect(lastVillage.scope_code)}
-            className="mt-2 min-h-[40px] rounded-lg border border-emerald-700/30 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300"
-          >
+          <button type="button" onClick={() => onSelect(lastVillage.scope_code)}
+            className="mt-2 min-h-[40px] rounded-lg border border-emerald-700/30 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
             Ongera uwemeze
           </button>
         </div>
@@ -190,64 +190,45 @@ export function VillagePicker({ onSelect }: { onSelect: (scopeCode: string) => v
 
       <label className="flex min-h-[46px] items-center gap-2 rounded-xl border border-border bg-background px-3">
         <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Andika izina ry'umudugudu…"
-          className="w-full bg-transparent py-2 text-sm outline-none"
-          aria-label="Shakisha umudugudu"
-        />
+        <input type="search" value={query} onChange={(event) => setQuery(event.target.value)}
+          placeholder={"Shakisha " + LABEL[level].toLocaleLowerCase() + " (ushatse)…"}
+          className="w-full bg-transparent py-2 text-sm outline-none" aria-label="Shakisha ahantu" />
       </label>
 
-      {!query.trim() && level !== "province" && (
-        <button
-          type="button"
-          onClick={goBack}
-          className="mt-3 inline-flex min-h-[40px] items-center gap-1 rounded-lg px-2 text-xs font-semibold text-muted-foreground hover:bg-muted"
-        >
-          <ChevronLeft className="h-4 w-4" aria-hidden /> Subira inyuma
-        </button>
+      {!busy && visibleChoices.length > 0 && (
+        <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {LABEL[level]} ({visibleChoices.length.toLocaleString("rw-RW")})
+        </p>
       )}
-
-      <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {query.trim() ? "Imidugudu ijyanye n'ishakisha" : LABEL[level]}
-        {allChoices.length > 0 && <span className="ml-2 normal-case">({allChoices.length.toLocaleString("rw-RW")})</span>}
-      </p>
-
-      {busy && <p className="py-4 text-sm text-muted-foreground">Turimo gufungura urutonde rw'igihugu…</p>}
+      {busy && <p className="py-4 text-sm text-muted-foreground">Turimo gufungura uru rwego…</p>}
       {!busy && message && <p role="status" className="py-3 text-sm text-amber-700">{message}</p>}
       {!busy && !message && visibleChoices.length === 0 && (
-        <p className="py-3 text-sm text-muted-foreground">Nta mazina ahuye n'ishakisha wabonye. Gerageza andi magambo.</p>
+        <p className="py-3 text-sm text-muted-foreground">
+          Nta mazina abitswe kuri uru rwego. Subira ku rwego rubanziriza cyangwa uhuze interineti.
+        </p>
       )}
 
       {!message && (
-        <div className="mt-2 grid max-h-[360px] gap-2 overflow-y-auto sm:grid-cols-2">
+        <div className="mt-2 grid max-h-[300px] gap-2 overflow-y-auto sm:grid-cols-2">
           {visibleChoices.map((choice) => (
-            <button
-              type="button"
-              key={choice.scope_code}
-              onClick={() => choose(choice)}
-              className="flex min-h-[46px] items-center justify-between gap-2 rounded-xl border border-border px-3 py-2 text-left text-sm hover:border-[#20603D] hover:bg-[#20603D]/5 focus:outline-none focus:ring-2 focus:ring-[#20603D]"
-            >
+            <button type="button" key={choice.id} onClick={() => choose(choice)}
+              className="flex min-h-[46px] items-center justify-between gap-2 rounded-xl border border-border px-3 py-2 text-left text-sm hover:border-[#20603D] hover:bg-[#20603D]/5 focus:outline-none focus:ring-2 focus:ring-[#20603D]">
               <span>
                 <span className="block font-semibold">{choice.name_kiny}</span>
                 {choice.name_eng && choice.name_eng !== choice.name_kiny && (
                   <span className="block text-xs text-muted-foreground">{choice.name_eng}</span>
                 )}
               </span>
-              {choice.level === "village" ? (
-                <MapPin className="h-4 w-4 shrink-0 text-[#20603D]" aria-hidden />
-              ) : (
-                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-              )}
+              {choice.level === "village"
+                ? <MapPin className="h-4 w-4 shrink-0 text-[#20603D]" aria-hidden />
+                : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />}
             </button>
           ))}
         </div>
       )}
 
       <p className="mt-3 text-[11px] text-muted-foreground">
-        Urutonde rwabikwa kuri telefone nyuma yo kurufungura kuri interineti. Hitamo umudugudu uzi; ntituhimba amazina y'ahantu.
+        Urutonde rukurwa muri database, rukabikwa kuri telefone kugira ngo rushobore kongera gufunguka offline.
       </p>
     </section>
   );

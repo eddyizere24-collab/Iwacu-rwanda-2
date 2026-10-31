@@ -1,5 +1,6 @@
 import type { ConfidenceMatch } from "@/types/boundary";
 import type { LocateSuccess } from "@/types/location";
+import { aggregateLocationHierarchy } from "@/lib/location-hierarchy";
 
 type AdministrativeLevel = "province" | "district" | "sector" | "cell" | "village";
 
@@ -109,54 +110,78 @@ export function nearestVillageEstimateFromIndex(
   const villages = choices.filter((choice) => choice.level === "village");
   if (villages.length === 0) return null;
 
-  const nearest = villages
+  // Use every official village representative point, not only the nearest
+  // three. Normalising only three points would force their scores to 100% and
+  // falsely hide uncertainty across neighbouring cells/districts.
+  const scale = Math.max(250, Number.isFinite(accuracyMeters) && accuracyMeters > 0 ? accuracyMeters : 1_000);
+  const searchLimit = Math.max(50_000, Math.min(200_000, scale * 4));
+  const candidates = villages
     .map((choice) => ({
       choice,
       distance: distanceMeters(latitude, longitude, choice.latitude, choice.longitude),
     }))
-    .filter((item) => Number.isFinite(item.distance))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, 3);
+    .filter((item) => Number.isFinite(item.distance) && item.distance <= searchLimit)
+    .sort((a, b) => a.distance - b.distance);
 
-  if (nearest.length === 0) return null;
+  // A very remote point still receives a clearly labelled nearest-Rwanda
+  // estimate rather than an empty result.
+  const considered = candidates.length > 0
+    ? candidates
+    : villages
+        .map((choice) => ({
+          choice,
+          distance: distanceMeters(latitude, longitude, choice.latitude, choice.longitude),
+        }))
+        .filter((item) => Number.isFinite(item.distance))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 3);
+  if (considered.length === 0) return null;
 
-  const scale = Math.max(250, Number.isFinite(accuracyMeters) && accuracyMeters > 0 ? accuracyMeters : 1_000);
-  const weights = nearest.map((item) => Math.exp(-item.distance / scale));
+  // Distance-weighted index scores, not calibrated probabilities. The index
+  // has one representative point per village, so this is an estimate until
+  // polygon-area/density priors and real-device hit rates are calibrated.
+  const weights = considered.map((item) => Math.exp(-item.distance / scale));
   const totalWeight = weights.reduce((sum, value) => sum + value, 0);
-  const matches: ConfidenceMatch[] = nearest.map((item, index) => ({
+  if (!(totalWeight > 0)) return null;
+  const allVillageMatches: ConfidenceMatch[] = considered.map((item, index) => ({
     scope_code: item.choice.scope_code,
     name_kiny: item.choice.name_kiny,
     name_eng: item.choice.name_eng,
     level: "village",
-    confidence: totalWeight > 0 ? Math.round((weights[index] / totalWeight) * 10_000) / 100 : 0,
+    confidence: Math.round((weights[index] / totalWeight) * 10_000) / 100,
     intersection_area_m2: 0,
   }));
 
+  const matches = allVillageMatches.slice(0, 3);
   const byCode = new Map(choices.map((choice) => [choice.scope_code, choice]));
+  const aggregates = aggregateLocationHierarchy(allVillageMatches);
+  const hierarchyCandidates: NonNullable<LocateSuccess["hierarchyCandidates"]> = {};
   const hierarchy: LocateSuccess["hierarchy"] = {};
-  let current: RepresentativeChoice | undefined = byCode.get(matches[0].scope_code);
 
-  for (let depth = 0; current && depth < 5; depth += 1) {
-    const match: ConfidenceMatch = {
-      scope_code: current.scope_code,
-      name_kiny: current.name_kiny,
-      name_eng: current.name_eng,
-      level: current.level,
-      confidence: matches[0].confidence,
-      intersection_area_m2: 0,
-    };
-    if (current.level === "village") hierarchy.village = match;
-    if (current.level === "cell") hierarchy.cell = match;
-    if (current.level === "sector") hierarchy.sector = match;
-    if (current.level === "district") hierarchy.district = match;
-    if (current.level === "province") hierarchy.province = match;
-    current = current.parent_scope_code ? byCode.get(current.parent_scope_code) : undefined;
+  for (const level of ["province", "district", "sector", "cell", "village"] as const) {
+    const resolved = (aggregates[level] ?? []).slice(0, 3).flatMap((item) => {
+      const choice = byCode.get(item.scope_code);
+      if (!choice) return [];
+      return [{
+        scope_code: choice.scope_code,
+        name_kiny: choice.name_kiny,
+        name_eng: choice.name_eng,
+        level,
+        confidence: item.confidence,
+        intersection_area_m2: item.intersection_area_m2,
+      } satisfies ConfidenceMatch];
+    });
+    if (resolved.length > 0) {
+      hierarchyCandidates[level] = resolved;
+      hierarchy[level] = resolved[0];
+    }
   }
 
   return {
     status: "success",
     matches,
     hierarchy,
+    hierarchyCandidates,
     leaders: [],
     source: "nearest",
     warning,
